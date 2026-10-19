@@ -1,8 +1,9 @@
+
 services:
   - type: web
     name: autostudio-api
     runtime: python
-    plan: starter
+    plan: free
     region: frankfurt
     buildCommand: pip install -r backend/requirements.txt
     startCommand: uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
@@ -11,10 +12,6 @@ services:
       - key: AUTOSTUDIO_SECRET
         generateValue: true
       - key: AUTOSTUDIO_DB
-        value: /var/data/autostudio.db
+        value: /tmp/autostudio.db
       - key: CORS_ORIGINS
         value: https://yourigoryan.github.io
-    disk:
-      name: autostudio-data
-      mountPath: /var/data
-      sizeGB: 1
