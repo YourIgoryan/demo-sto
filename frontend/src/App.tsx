@@ -78,7 +78,8 @@ type DaySlots = {
     label: string;
   }[];
 };
-const API = '/api';
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+const API = `${API_BASE_URL}/api`;
 const DEMO_MODE = import.meta.env.MODE === 'demo';
 const DEMO_CONFIG = demoConfigData as Config;
 const money = (n: number, currency = '₽') => `${new Intl.NumberFormat('ru-RU').format(n)} ${currency}`;
