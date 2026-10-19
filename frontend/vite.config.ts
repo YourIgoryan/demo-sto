@@ -1,8 +1,8 @@
-import { defineConfig } from 'vite'
+﻿import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 export default defineConfig(({ mode }) => ({
-  base: mode === 'demo' ? '/demo-sto/' : '/',
+  base: mode === 'development' ? '/' : '/demo-sto/',
   plugins: [react()],
   server: {
     host: '0.0.0.0',
@@ -15,3 +15,4 @@ export default defineConfig(({ mode }) => ({
   },
   build: { outDir: 'dist' }
 }))
+
