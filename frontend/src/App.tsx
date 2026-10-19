@@ -92,9 +92,25 @@ const dateTime = (v: string) => {
   return `${new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', timeZone: 'UTC' }).format(stamp)} в ${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
 };
 const durationLabel = (minutes: number) => minutes >= 1440 ? `${Math.floor(minutes / 1440)} дн. ${Math.floor(minutes % 1440 / 60)} ч` : minutes >= 60 ? `${Math.floor(minutes / 60)} ч${minutes % 60 ? ` ${minutes % 60} мин` : ''}` : `${minutes} мин`;
+const appPath = (path = '') =>
+  `${import.meta.env.BASE_URL}${path.replace(/^\/+/, '')}`;
+
 const pathParts = () => {
-  const p = window.location.pathname.split('/').filter(Boolean);
-  return { owner: p[0] === 'owner', slug: p[0] === 's' ? p[1] || 'sample' : p[0] === 'owner' ? p[1] || 'sample' : 'sample' };
+  const base = import.meta.env.BASE_URL;
+  let pathname = window.location.pathname;
+
+  if (pathname.startsWith(base)) {
+    pathname = pathname.slice(base.length);
+  }
+
+  const p = pathname.split('/').filter(Boolean);
+
+  return {
+    owner: p[0] === 'owner',
+    slug: p[0] === 's' || p[0] === 'owner'
+      ? p[1] || 'sample'
+      : 'sample',
+  };
 };
 const todayISO = (timeZone?: string) => {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
@@ -654,7 +670,7 @@ function App() {
                   <span>—</span>
                   <input type="time" value={h.close || '19:00'} onChange={e => setOwnerData((p: any) => ({ ...p, config: { ...p.config, hours: { ...p.config.hours, [String(i)]: { ...h, close: e.target.value } } } }))} />
                 </>}</div>
-              ;          
+              ;
 })}</div>
           <h3 className="settings-subtitle">Дополнительные выходные</h3>
           <label className="closed-dates-field">Закрытые даты (через запятую, YYYY-MM-DD)<input value={(ownerData.config.closed_dates || []).join(', ')} onChange={e => setOwnerData((p: any) => ({ ...p, config: { ...p.config, closed_dates: e.target.value.split(',').map((v: string) => v.trim()).filter(Boolean) } }))} placeholder="2026-12-31, 2027-01-01" />
@@ -787,7 +803,11 @@ function App() {
           <Phone size={15} />{config.phone}</a>
         <button className="button primary top-book" onClick={() => openBooking()}>Записаться <ArrowRight size={16} />
         </button>
-        <a className="owner-shortcut" href={`/owner/${route.slug}/`} aria-label="Кабинет владельца">
+        <a
+          className="owner-shortcut"
+          href={appPath(`owner/${route.slug}/`)}
+          aria-label="Кабинет владельца"
+        >
           <Settings2 size={18} />
         </a>
       </div>
@@ -1013,7 +1033,7 @@ function App() {
               <span>{day}</span>
               <b>{!h || h.closed ? 'Выходной' : `${h.open} — ${h.close}`}</b>
             </div>
-              ;          
+              ;
 })}<div className="hours-foot">
             <span className="live-dot" /> Запись онлайн доступна круглосуточно</div>
         </div>
@@ -1090,7 +1110,7 @@ function App() {
                 <b>{d.getUTCDate()}</b>
                 <small>{new Intl.DateTimeFormat('ru-RU', { month: 'short', timeZone: 'UTC' }).format(d)}</small>
               </button>
-                ;            
+                ;
 })}</div>
             <div className="slots-grid">{slotsLoading ? <p className="slot-message">Ищем свободные окна…</p> : !selectedService ? <p className="slot-message">Сначала выберите услугу.</p> : !(slots.find(d => d.date === selectedDay)?.slots || []).length && !(slots.find(d => d.date === selectedDay)?.busy_slots || []).length ? <p className="slot-message">На эту дату нет доступных окон. Выберите другой день.</p> : <>{[...(slots.find(d => d.date === selectedDay)?.slots || []).map(s => ({ ...s, busy: false })), ...(slots.find(d => d.date === selectedDay)?.busy_slots || []).map(s => ({ ...s, busy: true }))].sort((a, b) => a.label.localeCompare(b.label)).map((s: any) => <button type="button" disabled={s.busy} className={`slot-chip ${s.busy ? 'busy' : ''} ${slot?.start_at === s.start_at ? 'selected' : ''}`} key={s.start_at || s.label} onClick={() => { if (!s.busy) { setSlot(s); setBookingAttemptKey(uid()); } }}>{s.busy ? <>{s.label}<small>Занято</small></> : s.label}</button>)}</>}</div>
           </div>
@@ -1235,6 +1255,8 @@ function App() {
       <Check size={17} />{toast}</div>}
   </div>;
 }
+EAAqTBHSc4fcBS7XsdIyv4tQEZAh9l16dxxP0GVZBr1qyPLALLUUq97ZBSJX3438prcc4osDJPJcGXgPm6eFU8RdzCM2Whe1GEGHwqYjrQAqvKcrzdZC51cxAiy7qevlJmlZBYEP2PrPsOnGxtneFedVZBntJExUsziZC61TJKtvyE52gxJSCYR9EoHFXRrQTCfyyPH7EhxLMRDj2Kc5HVLjX3MMuBoUTnIjeAGQSojnh8kUOEpwZCnsiV8MAGbZAUZCywTdxjQzBVYZAWyXfolBWI2sGfwZD
+
 function ArrowUpRightIcon() {
   return <ArrowRight size={17} className="arrow-up-right" />;
 }
