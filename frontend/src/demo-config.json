@@ -1,0 +1,127 @@
+{
+  "slug": "sample",
+  "published": true,
+  "name": "DETAIL LAB",
+  "description": "Детейлинг, который возвращает автомобилю ощущение нового. Бережный уход, точная работа и материалы премиум-класса.",
+  "phone": "+7 (999) 123-45-67",
+  "address": "Санкт-Петербург, Лиговский проспект,  д. 50",
+  "map_url": "https://maps.google.com/?q=Санкт-Петербург+Лиговский+проспект+50",
+  "timezone": "Europe/Moscow",
+  "currency": "₽",
+  "theme_color": "#c8f169",
+  "hero_image": "https://images.unsplash.com/photo-1607860108855-64acf2078ed9?auto=format&fit=crop&w=1800&q=85",
+  "logo": "",
+  "prep_minutes": 20,
+  "cancellation_hours": 24,
+  "hours": {
+    "0": {
+      "open": "10:00",
+      "close": "20:00"
+    },
+    "1": {
+      "open": "10:00",
+      "close": "20:00"
+    },
+    "2": {
+      "open": "10:00",
+      "close": "20:00"
+    },
+    "3": {
+      "open": "10:00",
+      "close": "20:00"
+    },
+    "4": {
+      "open": "10:00",
+      "close": "20:00"
+    },
+    "5": {
+      "open": "10:00",
+      "close": "18:00"
+    },
+    "6": {
+      "closed": true
+    }
+  },
+  "closed_dates": [],
+  "boxes": [
+    {
+      "id": "box-1",
+      "title": "Бокс 1",
+      "active": true
+    },
+    {
+      "id": "box-2",
+      "title": "Бокс 2",
+      "active": true
+    }
+  ],
+  "services": [
+    {
+      "id": "wash",
+      "title": "Детейлинг-мойка",
+      "description": "Деликатная двухфазная мойка кузова, колёс и проёмов.",
+      "price_from": 3500,
+      "duration_minutes": 120,
+      "active": true,
+      "image": "https://images.unsplash.com/photo-1520340356584-f9917d1eea6f?auto=format&fit=crop&w=900&q=80"
+    },
+    {
+      "id": "polish",
+      "title": "Полировка кузова",
+      "description": "Восстановление блеска и уменьшение мелких дефектов лака.",
+      "price_from": 18000,
+      "duration_minutes": 480,
+      "active": true,
+      "image": "https://kabukigarage.com/cdn/shop/files/Paint_Polishing_Stock_Image_-_2048x2048_6f12e365-34dc-4687-8d61-57f91818c1dc_2000x.jpg?v=1684396409"
+    },
+    {
+      "id": "ceramic",
+      "title": "Керамическое покрытие",
+      "description": "Защитный слой с гидрофобным эффектом и глубоким блеском.",
+      "price_from": 28000,
+      "duration_minutes": 2880,
+      "active": true,
+      "image": "https://images.unsplash.com/photo-1607860108855-64acf2078ed9?auto=format&fit=crop&w=900&q=80"
+    },
+    {
+      "id": "interior",
+      "title": "Химчистка салона",
+      "description": "Глубокая очистка текстиля, кожи и труднодоступных зон.",
+      "price_from": 12000,
+      "duration_minutes": 360,
+      "active": true,
+      "image": "https://images.unsplash.com/photo-1507136566006-cfc505b114fc?auto=format&fit=crop&w=900&q=80"
+    }
+  ],
+  "gallery": [
+    {
+      "id": "g1",
+      "image": "https://images.unsplash.com/photo-1607860108855-64acf2078ed9?auto=format&fit=crop&w=1100&q=85",
+      "caption": "Глубокий блеск после полировки"
+    },
+    {
+      "id": "g2",
+      "image": "https://images.unsplash.com/photo-1520340356584-f9917d1eea6f?auto=format&fit=crop&w=1100&q=85",
+      "caption": "Деликатная мойка кузова"
+    },
+    {
+      "id": "g3",
+      "image": "https://images.unsplash.com/photo-1507136566006-cfc505b114fc?auto=format&fit=crop&w=1100&q=85",
+      "caption": "Чистый салон — новый уровень комфорта"
+    }
+  ],
+  "cards": [
+    {
+      "title": "Безопасный уход",
+      "text": "Проверенные составы и технологии для каждого типа покрытия."
+    },
+    {
+      "title": "Честная оценка",
+      "text": "Обсуждаем состояние автомобиля и стоимость до начала работ."
+    },
+    {
+      "title": "Результат в деталях",
+      "text": "Контролируем качество на каждом этапе и показываем результат."
+    }
+  ]
+}

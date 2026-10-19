@@ -1,0 +1,34 @@
+services:
+  autostudio:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      AUTOSTUDIO_SECRET: ${AUTOSTUDIO_SECRET:?Set AUTOSTUDIO_SECRET in .env}
+      AUTOSTUDIO_DB: /data/autostudio.db
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      OPENAI_MAX_REQUESTS_PER_DAY: ${OPENAI_MAX_REQUESTS_PER_DAY:-80}
+    volumes:
+      - ./data:/data
+      - ./tenants:/app/tenants
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - autostudio
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+volumes:
+  caddy_data:
+  caddy_config:
