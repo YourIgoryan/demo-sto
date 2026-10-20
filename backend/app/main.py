@@ -71,17 +71,30 @@ def box_list(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     boxes = [b for b in cfg.get("boxes", []) if b.get("active", True)]
     return boxes
 
-def interval_conflict(c: sqlite3.Connection, tenant: str, box_id: str, start: datetime, end: datetime, exclude_id: int | None = None) -> bool:
-    # SQLite can compare normalized ISO strings, but PostgreSQL must compare the
-    # stored TEXT values as timestamps. String comparisons can miss overlaps when
-    # ISO values differ in offset/fractional-second formatting.
-    if DATABASE_URL:
-        sql = "SELECT 1 FROM bookings WHERE tenant=? AND box_id=? AND status NOT IN ('cancelled','rejected') AND CAST(start_at AS TIMESTAMP) < CAST(? AS TIMESTAMP) AND CAST(end_at AS TIMESTAMP) > CAST(? AS TIMESTAMP)"
-    else:
-        sql = "SELECT 1 FROM bookings WHERE tenant=? AND box_id=? AND status NOT IN ('cancelled','rejected') AND start_at < ? AND end_at > ?"
-    args: list[Any] = [tenant, box_id, end.isoformat(), start.isoformat()]
+def interval_conflict(
+    c: sqlite3.Connection,
+    tenant: str,
+    box_id: str,
+    start: datetime,
+    end: datetime,
+    exclude_id: int | None = None,
+) -> bool:
+    # Пока у автосервиса только одно место для записи:
+    # проверяем все боксы, а не только выбранный.
+    sql = """
+        SELECT 1
+        FROM bookings
+        WHERE tenant = ?
+          AND status NOT IN ('cancelled', 'rejected')
+          AND start_at < ?
+          AND end_at > ?
+    """
+    args: list[Any] = [tenant, end.isoformat(), start.isoformat()]
+
     if exclude_id is not None:
-        sql += " AND id != ?"; args.append(exclude_id)
+        sql += " AND id != ?"
+        args.append(exclude_id)
+
     sql += " LIMIT 1"
     row = c.execute(sql, args).fetchone()
     return row is not None
