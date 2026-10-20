@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from .db import connect, init_db, ROOT, DATABASE_URL, DatabaseIntegrityError
+from .db import connect, init_db, ROOT
 from .security import hash_password, verify_password, issue_token, read_token
 from .whatsapp import notify_booking_whatsapp
 
@@ -71,38 +71,16 @@ def box_list(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     boxes = [b for b in cfg.get("boxes", []) if b.get("active", True)]
     return boxes
 
-
-def interval_conflict(
-    c: sqlite3.Connection,
-    tenant: str,
-    box_id: str,
-    start: datetime,
-    end: datetime,
-    exclude_id: int | None = None,
-) -> bool:
-    # Для текущего режима автосервиса одна активная запись
-    # блокирует время независимо от выбранного бокса.
-    sql = """
-        SELECT 1
-        FROM bookings
-        WHERE tenant = ?
-          AND status NOT IN ('cancelled', 'rejected')
-          AND start_at < ?
-          AND end_at > ?
-    """
-    args: list[Any] = [
-        tenant,
-        end.isoformat(),
-        start.isoformat(),
-    ]
-
+def interval_conflict(c: sqlite3.Connection, tenant: str, box_id: str, start: datetime, end: datetime, exclude_id: int | None = None) -> bool:
+    # The current AutoStudio configuration permits only one active booking at a time,
+    # regardless of which box ID the client submits.
+    sql = "SELECT 1 FROM bookings WHERE tenant=? AND status NOT IN ('cancelled','rejected') AND start_at < ? AND end_at > ?"
+    args: list[Any] = [tenant, end.isoformat(), start.isoformat()]
     if exclude_id is not None:
         sql += " AND id != ?"
         args.append(exclude_id)
-
     sql += " LIMIT 1"
     return c.execute(sql, args).fetchone() is not None
-
 
 def rate_limit(key: str, max_calls: int = 12, window: int = 60):
     now = time.time(); arr = [t for t in _RATE.get(key, []) if now - t < window]
@@ -152,12 +130,7 @@ class ManualBooking(BaseModel): service_id: str; start_at: str; customer_name: s
 class PaymentBody(BaseModel): kind: str = "payment"; amount: int = Field(gt=0, le=100000000); note: str = ""
 
 @app.get("/api/health")
-def health():
-    # Verify the configured database is reachable; the old static health response
-    # only proved that FastAPI was alive, not that Neon was actually connected.
-    with connect() as c:
-        c.execute("SELECT 1").fetchone()
-    return {"status": "ok", "database": "postgresql" if DATABASE_URL else "sqlite", "database_connected": True}
+def health(): return {"status": "ok"}
 
 @app.get("/api/public/{slug}/config")
 def public_config(slug: str):
@@ -198,38 +171,100 @@ def icon(slug: str):
 
 @app.get("/api/public/{slug}/availability")
 def availability(slug: str, service_id: str, day: str, days: int = 7):
-    cfg = load_config(slug); service = find_service(cfg, service_id)
-    if not service: raise HTTPException(404, "Услуга не найдена")
-    try: start_day = date.fromisoformat(day)
-    except ValueError: raise HTTPException(422, "Некорректная дата")
-    days = max(1, min(days, 14)); duration = max(15, int(service.get("duration_minutes", 60))); prep = max(0, int(cfg.get("prep_minutes", 15)))
+    cfg = load_config(slug)
+    service = find_service(cfg, service_id)
+    if not service:
+        raise HTTPException(404, "Услуга не найдена")
+    try:
+        start_day = date.fromisoformat(day)
+    except ValueError:
+        raise HTTPException(422, "Некорректная дата")
+
+    days = max(1, min(days, 14))
+    duration = max(15, int(service.get("duration_minutes", 60)))
+    prep = max(0, int(cfg.get("prep_minutes", 15)))
     now_local = studio_now(cfg)
-    result = []
+    result: list[dict[str, Any]] = []
+    boxes = box_list(cfg)
+
+    # Availability used to issue one database query for every candidate slot and every box.
+    # Load overlapping bookings once, then check intervals in memory.
+    window_start = datetime.combine(start_day, datetime.min.time())
+    window_end = datetime.combine(start_day + timedelta(days=days), datetime.min.time())
+    occupied: list[tuple[str, datetime, datetime]] = []
     with connect() as c:
-        for offset in range(days):
-            d = start_day + timedelta(days=offset); hours = hours_for(cfg, d)
-            if d < now_local.date() or not hours: result.append({"date": d.isoformat(), "slots": [], "busy_slots": []}); continue
-            begin = datetime.combine(d, datetime.strptime(hours["open"], "%H:%M").time())
-            finish = datetime.combine(d, datetime.strptime(hours["close"], "%H:%M").time())
-            slots = []; busy_slots = []; cursor = begin
-            if d == now_local.date():
-                mins = now_local.hour * 60 + now_local.minute
-                rounded = ((mins + 29) // 30) * 30
-                cursor = max(cursor, datetime.combine(d, datetime.min.time()) + timedelta(minutes=rounded))
-            while (cursor < finish if duration >= 24 * 60 else cursor + timedelta(minutes=duration + prep) <= finish) and len(slots) < 80:
-                end = cursor + timedelta(minutes=duration + prep)
-                available_box = None
-                for box in box_list(cfg):
-                    # Multi-day bookings remain occupied across all dates; no slot if end spills into a closed day.
-                    if duration >= 24 * 60:
-                        last_day = (end - timedelta(seconds=1)).date()
-                        if any(hours_for(cfg, d + timedelta(days=i)) is None for i in range(1, (last_day-d).days + 1)): continue
-                    if not interval_conflict(c, slug, box["id"], cursor, end): available_box = box; break
-                if available_box: slots.append({"start_at": cursor.isoformat(), "end_at": end.isoformat(), "box_id": available_box["id"], "label": cursor.strftime("%H:%M")})
-                else: busy_slots.append({"label": cursor.strftime("%H:%M")})
-                cursor += timedelta(minutes=30)
-            result.append({"date": d.isoformat(), "slots": slots, "busy_slots": busy_slots})
-    return {"service": {"id": service["id"], "title": service["title"], "duration_minutes": duration}, "days": result}
+        rows = c.execute(
+            "SELECT box_id, start_at, end_at FROM bookings "
+            "WHERE tenant=? AND status NOT IN ('cancelled','rejected') "
+            "AND start_at < ? AND end_at > ?",
+            (slug, window_end.isoformat(), window_start.isoformat()),
+        ).fetchall()
+        for row in rows:
+            try:
+                occupied.append((
+                    str(row["box_id"]),
+                    datetime.fromisoformat(str(row["start_at"])).replace(tzinfo=None),
+                    datetime.fromisoformat(str(row["end_at"])).replace(tzinfo=None),
+                ))
+            except (KeyError, TypeError, ValueError):
+                # Ignore malformed legacy rows rather than breaking the booking calendar.
+                continue
+
+    for offset in range(days):
+        d = start_day + timedelta(days=offset)
+        hours = hours_for(cfg, d)
+        if d < now_local.date() or not hours:
+            result.append({"date": d.isoformat(), "slots": [], "busy_slots": []})
+            continue
+
+        begin = datetime.combine(d, datetime.strptime(hours["open"], "%H:%M").time())
+        finish = datetime.combine(d, datetime.strptime(hours["close"], "%H:%M").time())
+        slots = []
+        busy_slots = []
+        cursor = begin
+        if d == now_local.date():
+            mins = now_local.hour * 60 + now_local.minute
+            rounded = ((mins + 29) // 30) * 30
+            cursor = max(cursor, datetime.combine(d, datetime.min.time()) + timedelta(minutes=rounded))
+
+        while (cursor < finish if duration >= 24 * 60 else cursor + timedelta(minutes=duration + prep) <= finish) and len(slots) + len(busy_slots) < 80:
+            slot_end = cursor + timedelta(minutes=duration + prep)
+            crosses_closed_day = False
+            if duration >= 24 * 60:
+                last_day = (slot_end - timedelta(seconds=1)).date()
+                crosses_closed_day = any(
+                    hours_for(cfg, d + timedelta(days=i)) is None
+                    for i in range(1, (last_day - d).days + 1)
+                )
+
+            available_box = None
+            if not crosses_closed_day:
+                for box in boxes:
+                    # Preserve current one-booking-at-a-time policy: any active booking blocks this slot.
+                    conflict = any(
+                        busy_start < slot_end and busy_end > cursor
+                        for _, busy_start, busy_end in occupied
+                    )
+                    if not conflict:
+                        available_box = box
+                        break
+            if available_box:
+                slots.append({
+                    "start_at": cursor.isoformat(),
+                    "end_at": slot_end.isoformat(),
+                    "box_id": available_box["id"],
+                    "label": cursor.strftime("%H:%M"),
+                })
+            else:
+                busy_slots.append({"label": cursor.strftime("%H:%M")})
+            cursor += timedelta(minutes=30)
+
+        result.append({"date": d.isoformat(), "slots": slots, "busy_slots": busy_slots})
+
+    return {
+        "service": {"id": service["id"], "title": service["title"], "duration_minutes": duration},
+        "days": result,
+    }
 
 @app.post("/api/public/{slug}/book")
 def create_booking(slug: str, body: BookingBody, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")):
@@ -274,7 +309,7 @@ def create_booking(slug: str, body: BookingBody, request: Request, idempotency_k
                 logging.getLogger(__name__).exception("Unexpected WhatsApp notification error")
             return {"booking": public_booking(row), "cancel_token": public_id, "duplicate": False}
         except HTTPException: raise
-        except (sqlite3.IntegrityError, DatabaseIntegrityError):
+        except sqlite3.IntegrityError:
             c.execute("ROLLBACK")
             row = c.execute("SELECT * FROM bookings WHERE tenant=? AND idempotency_key=?", (slug, key)).fetchone()
             if row: return {"booking": public_booking(row), "cancel_token": row["public_id"], "duplicate": True}

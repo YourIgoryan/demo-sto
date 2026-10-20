@@ -234,8 +234,23 @@ function App() {
       setSlotsLoading(false);
       return;
     }
-    api<{ days: DaySlots[]; }>(`/public/${route.slug}/availability?service_id=${encodeURIComponent(selectedService)}&day=${selectedDay}&days=10`).then(d => setSlots(d.days)).catch(e => { setSlots([]); setToast(e.message); }).finally(() => setSlotsLoading(false));
-  }, [bookingOpen, selectedService, selectedDay, route.slug]);
+    const controller = new AbortController();
+    setSlotsLoading(true);
+    api<{ days: DaySlots[]; }>(
+      `/public/${route.slug}/availability?service_id=${encodeURIComponent(selectedService)}&day=${selectedDay}&days=10`,
+      { signal: controller.signal, cache: 'no-store' },
+    ).then(d => {
+      if (!controller.signal.aborted) setSlots(d.days);
+    }).catch(e => {
+      if (!controller.signal.aborted) {
+        setSlots([]);
+        setToast(e instanceof Error ? e.message : 'Не удалось загрузить свободное время');
+      }
+    }).finally(() => {
+      if (!controller.signal.aborted) setSlotsLoading(false);
+    });
+    return () => controller.abort();
+  }, [bookingOpen, selectedService, route.slug]);
   useReveal([config, section, bookingOpen, ownerData]);
   function notify(s: string) {
     setToast(s);
@@ -261,16 +276,6 @@ function App() {
     }
     if (!slot || !selectedService) return;
     setSubmitting(true);
-    // Keep the same idempotency key for retries of the same booking payload.
-    // If the server saved the booking but the response was lost, retrying returns that booking.
-    const bookingFingerprint = [route.slug, selectedService, slot.start_at, slot.box_id, customer.name.trim(), customer.phone.trim(), customer.car.trim()].join('|');
-    let bookingHash = 2166136261;
-    for (let i = 0; i < bookingFingerprint.length; i++) {
-      bookingHash ^= bookingFingerprint.charCodeAt(i);
-      bookingHash = Math.imul(bookingHash, 16777619);
-    }
-    const stableBookingKey = `booking-${(bookingHash >>> 0).toString(16)}-${bookingFingerprint.length}`;
-    setBookingAttemptKey(stableBookingKey);
     if (DEMO_MODE) {
       // Demo mode deliberately does not send or persist the entered personal data.
       window.setTimeout(() => {
@@ -288,7 +293,7 @@ function App() {
         cancel_token: string;
         duplicate: boolean;
       }>(`/public/${route.slug}/book`, {
-        method: 'POST', headers: { 'Idempotency-Key': stableBookingKey }, body: JSON.stringify({
+        method: 'POST', headers: { 'Idempotency-Key': bookingAttemptKey }, body: JSON.stringify({
           customer_name: customer.name.trim(),
           phone: customer.phone.trim(),
           car: customer.car.trim(),
@@ -300,6 +305,7 @@ function App() {
       });
       const saved = { booking: data.booking, token: data.cancel_token };
       setMyBooking(saved);
+      setBookingAttemptKey(uid());
       localStorage.setItem(`autostudio-booking-${route.slug}`, JSON.stringify(saved));
       setBookingOpen(false);
       setShowMyBooking(true);
@@ -408,7 +414,7 @@ function App() {
     if (!serviceId) return;
     const startAt = window.prompt('Дата и время начала (например 2026-10-20T10:00)');
     if (!startAt) return;
-    const customer_name = window.prompt('РРјСЏ клиента');
+    const customer_name = window.prompt('Имя клиента');
     if (!customer_name) return;
     const phone = window.prompt('Телефон клиента') || '';
     const car = window.prompt('Автомобиль (марка и модель)') || '';
@@ -470,12 +476,12 @@ function App() {
   if (window.location.pathname.replace(/\/+$/, '') === '/privacy-policy') return <main className="legal-page">
     <header className="legal-top">
       <a className="legal-brand" href="/">AUTO<span>STUDIO</span></a>
-      <a className="legal-back" href="/">в†ђ Вернуться на сайт</a>
+      <a className="legal-back" href="/">← Вернуться на сайт</a>
     </header>
     <article className="legal-document">
       <div className="legal-hero">
-        <span className="legal-eyebrow">AUTOSTUDIO / ПРАВОВАЯ РРќР¤РћР РњРђР¦РРЇ</span>
-        <h1>РџРћР›РРўРРљРђ<br/><em>РћР‘Р РђР‘РћРўРљР ПЕРСОНАЛЬНЫХ ДАННЫХ</em></h1>
+        <span className="legal-eyebrow">AUTOSTUDIO / ПРАВОВАЯ ИНФОРМАЦИЯ</span>
+        <h1>ПОЛИТИКА<br/><em>ОБРАБОТКИ ПЕРСОНАЛЬНЫХ ДАННЫХ</em></h1>
         <p>Как используются сведения, которые вы оставляете при обращении в студию и оформлении онлайн-записи.</p>
         <div className="legal-meta"><span>Редакция: 18 октября 2026 года</span><span>Для сайта и сервиса онлайн-записи AutoStudio</span></div>
       </div>
@@ -483,19 +489,19 @@ function App() {
       <nav className="legal-index" aria-label="Содержание политики">
         <a href="#policy-1">01. Общие положения</a><a href="#policy-2">02. Оператор</a><a href="#policy-3">03. Какие данные обрабатываются</a><a href="#policy-4">04. Цели обработки</a><a href="#policy-5">05. Основания и порядок</a><a href="#policy-6">06. Передача третьим лицам</a><a href="#policy-7">07. Сроки хранения</a><a href="#policy-8">08. Защита данных</a><a href="#policy-9">09. Права пользователя</a><a href="#policy-10">10. Контакты и изменения</a>
       </nav>
-      <section id="policy-1"><span className="legal-section-num">01 / РћР‘Р©РР• РџРћР›РћР–Р•РќРРЇ</span><h2>О чём этот документ</h2><p>Настоящая Политика обработки персональных данных (далее — «Политика») описывает порядок обработки и защиты персональных данных пользователей сайта и сервиса онлайн-записи AutoStudio (далее — «Сервис»).</p><p>Политика составлена с учётом Федерального закона РФ от 27.07.2006 в„– 152-ФЗ «О персональных данных». Она применяется к сведениям, которые пользователь предоставляет при оформлении записи, отправке заявки или обращении к оператору через Сервис.</p></section>
-      <section id="policy-2"><span className="legal-section-num">02 / ОПЕРАТОР</span><h2>Кто отвечает за данные</h2><p>Оператор персональных данных: <strong>[полное наименование организации или Ф. Р. О. индивидуального предпринимателя]</strong>.</p><p>Адрес оператора: <strong>[юридический адрес или адрес регистрации]</strong>.</p><p>Контакт для обращений по вопросам персональных данных: <strong>[рабочий адрес электронной почты]</strong>, телефон: <strong>[контактный номер]</strong>.</p><p>До публикации заполните эти сведения. Не оставляйте в опубликованной версии поля в квадратных скобках.</p></section>
+      <section id="policy-1"><span className="legal-section-num">01 / ОБЩИЕ ПОЛОЖЕНИЯ</span><h2>О чём этот документ</h2><p>Настоящая Политика обработки персональных данных (далее — «Политика») описывает порядок обработки и защиты персональных данных пользователей сайта и сервиса онлайн-записи AutoStudio (далее — «Сервис»).</p><p>Политика составлена с учётом Федерального закона РФ от 27.07.2006 № 152-ФЗ «О персональных данных». Она применяется к сведениям, которые пользователь предоставляет при оформлении записи, отправке заявки или обращении к оператору через Сервис.</p></section>
+      <section id="policy-2"><span className="legal-section-num">02 / ОПЕРАТОР</span><h2>Кто отвечает за данные</h2><p>Оператор персональных данных: <strong>[полное наименование организации или Ф. И. О. индивидуального предпринимателя]</strong>.</p><p>Адрес оператора: <strong>[юридический адрес или адрес регистрации]</strong>.</p><p>Контакт для обращений по вопросам персональных данных: <strong>[рабочий адрес электронной почты]</strong>, телефон: <strong>[контактный номер]</strong>.</p><p>До публикации заполните эти сведения. Не оставляйте в опубликованной версии поля в квадратных скобках.</p></section>
       <section id="policy-3"><span className="legal-section-num">03 / СОСТАВ ДАННЫХ</span><h2>Какие сведения могут обрабатываться</h2><ul><li>имя и номер телефона;</li><li>марка и модель автомобиля;</li><li>выбранная услуга, дата и время записи, выбранный бокс;</li><li>комментарий пользователя к заявке;</li><li>технические сведения, необходимые для работы сайта, его безопасности и диагностики ошибок, например данные браузера и журналы запросов.</li></ul><p>Пожалуйста, не указывайте в комментариях сведения, не относящиеся к записи, в том числе специальные категории персональных данных.</p></section>
-      <section id="policy-4"><span className="legal-section-num">04 / Р¦Р•Р›Р РћР‘Р РђР‘РћРўРљР</span><h2>Для чего используются данные</h2><ul><li>создание, подтверждение, изменение или отмена записи;</li><li>связь с пользователем по вопросам заявки и оказания выбранной услуги;</li><li>учёт загрузки и расписания студии;</li><li>предотвращение злоупотреблений, обеспечение безопасности и стабильной работы Сервиса;</li><li>исполнение обязанностей, предусмотренных законодательством.</li></ul><p>Данные не должны использоваться для рекламных рассылок без отдельного законного основания и, когда требуется, отдельного согласия.</p></section>
-      <section id="policy-5"><span className="legal-section-num">05 / РћРЎРќРћР’РђРќРРЇ Р ПОРЯДОК</span><h2>Как осуществляется обработка</h2><p>Основаниями обработки могут быть согласие пользователя, необходимость совершения действий по его запросу до заключения договора, исполнение договора и требования законодательства — в зависимости от конкретной цели.</p><p>Обработка может включать сбор, запись, систематизацию, хранение, уточнение, использование, передачу в случаях, описанных в Политике, блокирование и удаление данных. Согласие на обработку запрашивается отдельно от иных подтверждений интерфейса.</p></section>
+      <section id="policy-4"><span className="legal-section-num">04 / ЦЕЛИ ОБРАБОТКИ</span><h2>Для чего используются данные</h2><ul><li>создание, подтверждение, изменение или отмена записи;</li><li>связь с пользователем по вопросам заявки и оказания выбранной услуги;</li><li>учёт загрузки и расписания студии;</li><li>предотвращение злоупотреблений, обеспечение безопасности и стабильной работы Сервиса;</li><li>исполнение обязанностей, предусмотренных законодательством.</li></ul><p>Данные не должны использоваться для рекламных рассылок без отдельного законного основания и, когда требуется, отдельного согласия.</p></section>
+      <section id="policy-5"><span className="legal-section-num">05 / ОСНОВАНИЯ И ПОРЯДОК</span><h2>Как осуществляется обработка</h2><p>Основаниями обработки могут быть согласие пользователя, необходимость совершения действий по его запросу до заключения договора, исполнение договора и требования законодательства — в зависимости от конкретной цели.</p><p>Обработка может включать сбор, запись, систематизацию, хранение, уточнение, использование, передачу в случаях, описанных в Политике, блокирование и удаление данных. Согласие на обработку запрашивается отдельно от иных подтверждений интерфейса.</p></section>
       <section id="policy-6"><span className="legal-section-num">06 / ПЕРЕДАЧА ДАННЫХ</span><h2>Кому данные могут передаваться</h2><p>Доступ к данным предоставляется только в объёме, необходимом для работы Сервиса и обработки записи. При фактическом использовании могут привлекаться поставщики хостинга, серверной инфраструктуры, технического обслуживания и сервисов уведомлений.</p><p>Перед публикацией оператор должен указать фактически используемых получателей и проверить условия обработки, локализацию баз данных и трансграничную передачу, если она имеет место. Передача данных не должна осуществляться для целей, несовместимых с указанными в Политике.</p></section>
-      <section id="policy-7"><span className="legal-section-num">07 / РЎР РћРљР РҐР РђРќР•РќРРЇ</span><h2>Как долго хранятся данные</h2><p>Данные хранятся не дольше, чем этого требуют цели обработки, договорные отношения и применимые требования законодательства, после чего удаляются или обезличиваются, если отсутствуют иные законные основания для хранения.</p><p>Оператору необходимо определить и закрепить фактические сроки для заявок, записей, технических журналов и резервных копий с учётом используемой базы данных и настроек резервного копирования.</p></section>
-      <section id="policy-8"><span className="legal-section-num">08 / Р—РђР©РРўРђ ДАННЫХ</span><h2>Как защищается информация</h2><p>Оператор принимает необходимые организационные и технические меры для защиты данных от неправомерного доступа, изменения, раскрытия, уничтожения и иных неправомерных действий. Конкретные меры должны соответствовать реальной архитектуре Сервиса, настройкам доступа, резервному копированию и используемой инфраструктуре.</p></section>
+      <section id="policy-7"><span className="legal-section-num">07 / СРОКИ ХРАНЕНИЯ</span><h2>Как долго хранятся данные</h2><p>Данные хранятся не дольше, чем этого требуют цели обработки, договорные отношения и применимые требования законодательства, после чего удаляются или обезличиваются, если отсутствуют иные законные основания для хранения.</p><p>Оператору необходимо определить и закрепить фактические сроки для заявок, записей, технических журналов и резервных копий с учётом используемой базы данных и настроек резервного копирования.</p></section>
+      <section id="policy-8"><span className="legal-section-num">08 / ЗАЩИТА ДАННЫХ</span><h2>Как защищается информация</h2><p>Оператор принимает необходимые организационные и технические меры для защиты данных от неправомерного доступа, изменения, раскрытия, уничтожения и иных неправомерных действий. Конкретные меры должны соответствовать реальной архитектуре Сервиса, настройкам доступа, резервному копированию и используемой инфраструктуре.</p></section>
       <section id="policy-9"><span className="legal-section-num">09 / ПРАВА ПОЛЬЗОВАТЕЛЯ</span><h2>Как направить запрос</h2><p>Пользователь может обратиться к оператору для получения информации об обработке своих данных, уточнения неточных сведений, отзыва согласия или реализации иных прав, предусмотренных законодательством.</p><p>Запрос направляется по контактам, указанным в разделе 2. Для защиты данных оператор вправе запросить информацию, необходимую для подтверждения личности заявителя. Отзыв согласия не отменяет обработку, для которой сохраняется иное законное основание.</p></section>
-      <section id="policy-10"><span className="legal-section-num">10 / Р—РђРљР›Р®Р§РРўР•Р›Р¬РќР«Р• РџРћР›РћР–Р•РќРРЇ</span><h2>Контакты и обновления</h2><p>Актуальная версия Политики размещается на странице <a href="/privacy-policy">/privacy-policy</a>. При изменении целей, состава данных или порядка обработки Политика обновляется, а в случаях, предусмотренных законом, запрашивается новое согласие.</p><p>Вопросы по обработке персональных данных направляйте оператору по контактам, указанным в разделе 2.</p></section>
+      <section id="policy-10"><span className="legal-section-num">10 / ЗАКЛЮЧИТЕЛЬНЫЕ ПОЛОЖЕНИЯ</span><h2>Контакты и обновления</h2><p>Актуальная версия Политики размещается на странице <a href="/privacy-policy">/privacy-policy</a>. При изменении целей, состава данных или порядка обработки Политика обновляется, а в случаях, предусмотренных законом, запрашивается новое согласие.</p><p>Вопросы по обработке персональных данных направляйте оператору по контактам, указанным в разделе 2.</p></section>
       <aside className="legal-note"><strong>Важно перед запуском.</strong> До публикации необходимо заполнить реквизиты оператора, указать реальные контакты и проверить используемые серверы, базу данных, поставщиков хостинга и сервисы уведомлений. Также проверьте, что процессы сайта соответствуют этой Политике и отдельно оформленному согласию.</aside>
     </article>
-    <footer className="legal-footer"><span>AUTOSTUDIO В· ПЕРСОНАЛЬНЫЕ ДАННЫЕ</span><a href="/">в†ђ Вернуться на сайт</a></footer>
+    <footer className="legal-footer"><span>AUTOSTUDIO · ПЕРСОНАЛЬНЫЕ ДАННЫЕ</span><a href="/">← Вернуться на сайт</a></footer>
   </main>;
   if (loading) return <div className="loader-screen">
     <div className="loader-mark">A</div>
@@ -648,7 +654,7 @@ function App() {
           <div className="panel-heading">
             <div>
               <h2>Основные данные</h2>
-              <p>РР·РјРµРЅРµРЅРёСЏ применятся к публичной странице после сохранения</p>
+              <p>Изменения применятся к публичной странице после сохранения</p>
             </div>
             <button className="button primary" onClick={saveConfig} disabled={saving}>
               <Save size={16} />{saving ? 'Сохраняем…' : 'Сохранить'}</button>
@@ -776,13 +782,13 @@ function App() {
     <span>Проверьте ссылку или обратитесь к владельцу студии.</span>
   </div>;
   return <div className="app-shell" style={{ '--accent': config.theme_color || '#c8f169' } as CSSProperties}>
-    {DEMO_MODE && <div className="demo-ribbon">Р”Р•РњРћР’Р•Р РЎРРЇ В· заявки не отправляются</div>}
+    {DEMO_MODE && <div className="demo-ribbon">ДЕМОВЕРСИЯ · заявки не отправляются</div>}
     <header className="topbar">
       <a className="brand" href="#top" onClick={() => setSection('home')}>
         <span className="brand-symbol">{config.logo ? <img src={config.logo} alt="" /> : <Wrench size={19} />}</span>
         <span>
           <b>{config.name}</b>
-          <small>CARE В· DETAIL В· DRIVE</small>
+          <small>CARE · DETAIL · DRIVE</small>
         </span>
       </a>
       <nav className="desktop-nav">
@@ -826,7 +832,7 @@ function App() {
         <div className="hero-photo" aria-hidden="true"><img className="hero-image" src={config.hero_image} alt="" loading="eager" fetchPriority="high" decoding="async" /></div>
         <div className="hero-content">
           <div className="eyebrow hero-eyebrow">
-            <span className="live-dot" /> РџР Р•РњРРђР›Р¬РќР«Р™ УХОД ЗА РђР’РўРћРњРћР‘РР›Р•Рњ</div>
+            <span className="live-dot" /> ПРЕМИАЛЬНЫЙ УХОД ЗА АВТОМОБИЛЕМ</div>
           <h1>{config.name}<br />
             <em>в деталях.</em>
           </h1>
@@ -892,7 +898,7 @@ function App() {
       <section className="section services-section" id="services">
         <div className="section-heading reveal">
           <div>
-            <p className="eyebrow">РЈРЎР›РЈР“Р / 01</p>
+            <p className="eyebrow">УСЛУГИ / 01</p>
             <h2>Уход, который<br />
               <em>видно сразу.</em>
             </h2>
@@ -963,7 +969,7 @@ function App() {
       <section className="section gallery-section" id="works">
         <div className="section-heading reveal">
           <div>
-            <p className="eyebrow">РџРћР РўР¤РћР›РРћ / 03</p>
+            <p className="eyebrow">ПОРТФОЛИО / 03</p>
             <h2>Результат говорит<br />
               <em>сам за себя.</em>
             </h2>
@@ -981,7 +987,7 @@ function App() {
           </article>)}</div>{!config.gallery?.length && <div className="empty-gallery">Фотографии работ скоро появятся.</div>}</section>
       <section className="booking-banner reveal">
         <div>
-          <p className="eyebrow">ВАШ РђР’РўРћРњРћР‘РР›Р¬ ГОТОВ К ПЕРЕМЕНАМ?</p>
+          <p className="eyebrow">ВАШ АВТОМОБИЛЬ ГОТОВ К ПЕРЕМЕНАМ?</p>
           <h2>Запланируем<br />
             <em>идеальный уход.</em>
           </h2>
@@ -1008,7 +1014,7 @@ function App() {
                 <MapPin size={20} />
               </span>
               <div>
-                <small>АДРЕС РЎРўРЈР”РР</small>
+                <small>АДРЕС СТУДИИ</small>
                 <b>{config.address}</b>
                 <em>Построить маршрут <ArrowUpRightIcon /></em>
               </div>
@@ -1028,7 +1034,7 @@ function App() {
               <Phone size={20} />
             </span>
             <div>
-              <small>РџРћР—Р’РћРќРРўР¬ НАМ</small>
+              <small>ПОЗВОНИТЬ НАМ</small>
               <b>{config.phone}</b>
             </div>
           </a>
@@ -1056,7 +1062,7 @@ function App() {
         </span>
         <span>
           <b>{config.name}</b>
-          <small>CARE В· DETAIL В· DRIVE</small>
+          <small>CARE · DETAIL · DRIVE</small>
         </span>
       </a>
       <span>Качественный уход начинается с внимания к деталям.</span>
@@ -1090,7 +1096,7 @@ function App() {
       <div className="booking-modal" role="dialog" aria-modal="true" aria-labelledby="booking-title">
         <div className="modal-header">
           <div>
-            <p className="eyebrow">ОНЛАЙН-Р—РђРџРРЎР¬</p>
+            <p className="eyebrow">ОНЛАЙН-ЗАПИСЬ</p>
             <h2 id="booking-title">Запись в студию</h2>
             <p>Выберите услугу и свободное время.</p>
           </div>
@@ -1121,7 +1127,7 @@ function App() {
               </button>
                 ;
 })}</div>
-            <div className="slots-grid">{slotsLoading ? <p className="slot-message">РС‰РµРј свободные окна…</p> : !selectedService ? <p className="slot-message">Сначала выберите услугу.</p> : !(slots.find(d => d.date === selectedDay)?.slots || []).length && !(slots.find(d => d.date === selectedDay)?.busy_slots || []).length ? <p className="slot-message">На эту дату нет доступных окон. Выберите другой день.</p> : <>{[...(slots.find(d => d.date === selectedDay)?.slots || []).map(s => ({ ...s, busy: false })), ...(slots.find(d => d.date === selectedDay)?.busy_slots || []).map(s => ({ ...s, busy: true }))].sort((a, b) => a.label.localeCompare(b.label)).map((s: any) => <button type="button" disabled={s.busy} className={`slot-chip ${s.busy ? 'busy' : ''} ${slot?.start_at === s.start_at ? 'selected' : ''}`} key={s.start_at || s.label} onClick={() => { if (!s.busy) { setSlot(s); setBookingAttemptKey(uid()); } }}>{s.busy ? <>{s.label}<small>Занято</small></> : s.label}</button>)}</>}</div>
+            <div className="slots-grid">{slotsLoading ? <p className="slot-message">Ищем свободные окна…</p> : !selectedService ? <p className="slot-message">Сначала выберите услугу.</p> : !(slots.find(d => d.date === selectedDay)?.slots || []).length && !(slots.find(d => d.date === selectedDay)?.busy_slots || []).length ? <p className="slot-message">На эту дату нет доступных окон. Выберите другой день.</p> : <>{[...(slots.find(d => d.date === selectedDay)?.slots || []).map(s => ({ ...s, busy: false })), ...(slots.find(d => d.date === selectedDay)?.busy_slots || []).map(s => ({ ...s, busy: true }))].sort((a, b) => a.label.localeCompare(b.label)).map((s: any) => <button type="button" disabled={s.busy} className={`slot-chip ${s.busy ? 'busy' : ''} ${slot?.start_at === s.start_at ? 'selected' : ''}`} key={s.start_at || s.label} onClick={() => { if (!s.busy) { setSlot(s); setBookingAttemptKey(uid()); } }}>{s.busy ? <>{s.label}<small>Занято</small></> : s.label}</button>)}</>}</div>
           </div>
           <div className="form-divider" />
           <div className="form-two">
@@ -1151,7 +1157,7 @@ function App() {
       <div className="my-booking-modal" role="dialog" aria-modal="true">
         <div className="modal-header">
           <div>
-            <p className="eyebrow">ВАШ Р’РР—РРў</p>
+            <p className="eyebrow">ВАШ ВИЗИТ</p>
             <h2>Мои записи</h2>
           </div>
           <button className="icon-button" onClick={() => setShowMyBooking(false)}>
@@ -1171,15 +1177,15 @@ function App() {
               <b>{myBooking.booking.service_title}</b>
             </div>
             <div>
-              <small>ДАТА Р ВРЕМЯ</small>
+              <small>ДАТА И ВРЕМЯ</small>
               <b>{dateTime(myBooking.booking.start_at)}</b>
             </div>
             <div>
-              <small>РРњРЇ</small>
+              <small>ИМЯ</small>
               <b>{myBooking.booking.customer_name}</b>
             </div>
             <div>
-              <small>РђР’РўРћРњРћР‘РР›Р¬</small>
+              <small>АВТОМОБИЛЬ</small>
               <b>{myBooking.booking.car}</b>
             </div>
             <div>
@@ -1282,7 +1288,7 @@ function BookingTable({ rows, onStatus, onPayment, onReschedule, full = false }:
           <th>Клиент / авто</th>
           <th>Услуга</th>
           <th>Статус</th>
-          <th>РР·РјРµРЅРёС‚СЊ</th>
+          <th>Изменить</th>
           <th>Действия</th>
         </tr>
       </thead>
@@ -1294,14 +1300,14 @@ function BookingTable({ rows, onStatus, onPayment, onReschedule, full = false }:
           </td>
           <td>
             <b>{b.customer_name}</b>
-            <small>{b.car} В· {b.phone}</small>
+            <small>{b.car} · {b.phone}</small>
           </td>
           <td>{b.service_title}</td>
           <td>
             <span className={`status-pill status-${b.status}`}>{({ booked: 'Новая', confirmed: 'Подтверждена', arrived: 'Принята', in_progress: 'В работе', ready: 'Готова', completed: 'Завершена', cancelled: 'Отменена', rejected: 'Отклонена' } as Record<string, string>)[b.status] || b.status}</span>
           </td>
           <td>
-            <select aria-label="РР·РјРµРЅРёС‚СЊ статус" value={b.status} onChange={e => onStatus(b, e.target.value)}>
+            <select aria-label="Изменить статус" value={b.status} onChange={e => onStatus(b, e.target.value)}>
               <option value="booked">Новая</option>
               <option value="confirmed">Подтверждена</option>
               <option value="arrived">Принята</option>
@@ -1319,7 +1325,7 @@ function BookingTable({ rows, onStatus, onPayment, onReschedule, full = false }:
               <button onClick={() => onPayment?.(b, 'payment')} title="Записать оплату">
                 <CreditCard size={14} /> +</button>
               <button onClick={() => onPayment?.(b, 'refund')} title="Записать возврат">
-                <Minus size={14} /> в†©</button>
+                <Minus size={14} /> ↩</button>
             </div>
           </td>
         </tr>)}</tbody>
