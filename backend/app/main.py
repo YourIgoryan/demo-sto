@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from .db import connect, init_db, ROOT
+from .db import connect, init_db, ROOT, DatabaseIntegrityError
 from .security import hash_password, verify_password, issue_token, read_token
 from .whatsapp import notify_booking_whatsapp
 
@@ -245,7 +245,7 @@ def create_booking(slug: str, body: BookingBody, request: Request, idempotency_k
                 logging.getLogger(__name__).exception("Unexpected WhatsApp notification error")
             return {"booking": public_booking(row), "cancel_token": public_id, "duplicate": False}
         except HTTPException: raise
-        except sqlite3.IntegrityError:
+        except (sqlite3.IntegrityError, DatabaseIntegrityError):
             c.execute("ROLLBACK")
             row = c.execute("SELECT * FROM bookings WHERE tenant=? AND idempotency_key=?", (slug, key)).fetchone()
             if row: return {"booking": public_booking(row), "cancel_token": row["public_id"], "duplicate": True}
