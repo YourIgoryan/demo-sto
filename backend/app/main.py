@@ -71,6 +71,7 @@ def box_list(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     boxes = [b for b in cfg.get("boxes", []) if b.get("active", True)]
     return boxes
 
+
 def interval_conflict(
     c: sqlite3.Connection,
     tenant: str,
@@ -79,8 +80,8 @@ def interval_conflict(
     end: datetime,
     exclude_id: int | None = None,
 ) -> bool:
-    # Пока у автосервиса только одно место для записи:
-    # проверяем все боксы, а не только выбранный.
+    # Для текущего режима автосервиса одна активная запись
+    # блокирует время независимо от выбранного бокса.
     sql = """
         SELECT 1
         FROM bookings
@@ -89,15 +90,19 @@ def interval_conflict(
           AND start_at < ?
           AND end_at > ?
     """
-    args: list[Any] = [tenant, end.isoformat(), start.isoformat()]
+    args: list[Any] = [
+        tenant,
+        end.isoformat(),
+        start.isoformat(),
+    ]
 
     if exclude_id is not None:
         sql += " AND id != ?"
         args.append(exclude_id)
 
     sql += " LIMIT 1"
-    row = c.execute(sql, args).fetchone()
-    return row is not None
+    return c.execute(sql, args).fetchone() is not None
+
 
 def rate_limit(key: str, max_calls: int = 12, window: int = 60):
     now = time.time(); arr = [t for t in _RATE.get(key, []) if now - t < window]
