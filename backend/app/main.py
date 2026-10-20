@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from .db import connect, init_db, ROOT, DatabaseIntegrityError
+from .db import connect, init_db, ROOT, DATABASE_URL, DatabaseIntegrityError
 from .security import hash_password, verify_password, issue_token, read_token
 from .whatsapp import notify_booking_whatsapp
 
@@ -72,7 +72,13 @@ def box_list(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     return boxes
 
 def interval_conflict(c: sqlite3.Connection, tenant: str, box_id: str, start: datetime, end: datetime, exclude_id: int | None = None) -> bool:
-    sql = "SELECT 1 FROM bookings WHERE tenant=? AND box_id=? AND status NOT IN ('cancelled','rejected') AND start_at < ? AND end_at > ?"
+    # SQLite can compare normalized ISO strings, but PostgreSQL must compare the
+    # stored TEXT values as timestamps. String comparisons can miss overlaps when
+    # ISO values differ in offset/fractional-second formatting.
+    if DATABASE_URL:
+        sql = "SELECT 1 FROM bookings WHERE tenant=? AND box_id=? AND status NOT IN ('cancelled','rejected') AND CAST(start_at AS TIMESTAMP) < CAST(? AS TIMESTAMP) AND CAST(end_at AS TIMESTAMP) > CAST(? AS TIMESTAMP)"
+    else:
+        sql = "SELECT 1 FROM bookings WHERE tenant=? AND box_id=? AND status NOT IN ('cancelled','rejected') AND start_at < ? AND end_at > ?"
     args: list[Any] = [tenant, box_id, end.isoformat(), start.isoformat()]
     if exclude_id is not None:
         sql += " AND id != ?"; args.append(exclude_id)
@@ -128,7 +134,12 @@ class ManualBooking(BaseModel): service_id: str; start_at: str; customer_name: s
 class PaymentBody(BaseModel): kind: str = "payment"; amount: int = Field(gt=0, le=100000000); note: str = ""
 
 @app.get("/api/health")
-def health(): return {"status": "ok"}
+def health():
+    # Verify the configured database is reachable; the old static health response
+    # only proved that FastAPI was alive, not that Neon was actually connected.
+    with connect() as c:
+        c.execute("SELECT 1").fetchone()
+    return {"status": "ok", "database": "postgresql" if DATABASE_URL else "sqlite", "database_connected": True}
 
 @app.get("/api/public/{slug}/config")
 def public_config(slug: str):
