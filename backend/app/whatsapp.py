@@ -36,12 +36,18 @@ def notify_booking_whatsapp(booking: dict[str, Any]) -> bool:
         start = raw_start or "не указано"
 
     parameters = [
-        str(booking.get("customer_name") or "не указано"),
-        str(booking.get("service_title") or "не указана"),
-        start,
-        str(booking.get("car") or "не указан"),
-        str(booking.get("phone") or "не указан"),
+        {"type": "text", "parameter_name": "customer_name",
+         "text": str(booking.get("customer_name") or "Не указано")},
+        {"type": "text", "parameter_name": "service_title",
+         "text": str(booking.get("service_title") or "Не указано")},
+        {"type": "text", "parameter_name": "booking_time",
+         "text": start},
+        {"type": "text", "parameter_name": "car",
+         "text": str(booking.get("car") or "Не указан")},
+        {"type": "text", "parameter_name": "phone",
+         "text": str(booking.get("phone") or "Не указан")},
     ]
+
     payload = {
         "messaging_product": "whatsapp",
         "to": recipient,
@@ -51,7 +57,7 @@ def notify_booking_whatsapp(booking: dict[str, Any]) -> bool:
             "language": {"code": language},
             "components": [{
                 "type": "body",
-                "parameters": [{"type": "text", "text": value} for value in parameters],
+                "parameters": parameters,
             }],
         },
     }
