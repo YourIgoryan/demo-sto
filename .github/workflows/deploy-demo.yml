@@ -20,16 +20,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
-
       - name: Install dependencies
         run: npm install
         working-directory: frontend
-
       - name: Verify backend URL
         env:
           VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
@@ -38,26 +35,19 @@ jobs:
             echo "::error::Set repository variable VITE_API_BASE_URL to the deployed backend URL, e.g. https://autostudio-api.onrender.com"
             exit 1
           fi
-
       - name: Build production frontend
         run: npm run build
         working-directory: frontend
         env:
           VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
-
-      # GitHub Pages does not automatically route nested SPA paths
-      # such as /demo-sto/owner/sample/ to index.html.
       - name: Add SPA fallback for nested routes
         run: cp frontend/dist/index.html frontend/dist/404.html
-
       - name: Setup Pages
         uses: actions/configure-pages@v5
-
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: frontend/dist
-
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
