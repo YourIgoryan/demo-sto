@@ -310,3 +310,19 @@
 
 /* GitHub Pages demo mode */
 .demo-ribbon { position: relative; z-index: 30; padding: 8px 16px; text-align: center; background: #c8f169; color: #111311; font-size: 11px; font-weight: 800; letter-spacing: .12em; }
+
+
+/* Performance and booking management refinements */
+.map-placeholder{height:100%;min-height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:22px;text-align:center;background:radial-gradient(ellipse at center,#27301f 0%,#171a16 72%);color:#c8f169}
+.map-placeholder b{font-family:Manrope,sans-serif;font-size:18px;color:#f3f4ef}
+.map-placeholder span{font-size:12px;line-height:1.5;color:#b7bbae}
+.map-placeholder .button{margin-top:6px}
+.my-bookings-list{display:grid;gap:18px}
+.my-booking-entry{padding:18px;border:1px solid var(--line);border-radius:12px;background:#151814;min-width:0}
+.my-booking-entry .booking-details{margin:14px 0}
+.my-booking-entry .booking-actions{display:grid;grid-template-columns:1fr;gap:10px}
+.my-booking-entry .cancel-booking{min-height:54px;padding:16px 20px;font-size:14px;font-weight:800;white-space:normal}
+.my-booking-entry .booking-actions .button.primary{min-height:54px;font-size:14px}
+.payment-actions button[aria-label="Освободить слот"]{color:#ffb4a9;border-color:rgba(255,180,169,.35)}
+.payment-actions button[aria-label="Освободить слот"]:hover{background:rgba(255,90,70,.13)}
+@media(max-width:600px){.my-booking-entry{padding:13px}.my-booking-entry .booking-details{grid-template-columns:minmax(0,1fr)}.my-booking-entry .booking-actions .button{white-space:normal;line-height:1.35}}
