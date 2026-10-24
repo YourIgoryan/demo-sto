@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import demoConfigData from './demo-config.json';
-import { ArrowDownRight, ArrowLeft, ArrowRight, CalendarDays, Check, ChevronDown, Clock3, CreditCard, MapPin, Menu, MessageCircle, Minus, Plus, Settings2, ShieldCheck, Sparkles, UserRound, Wrench, X, CarFront, Camera, Phone, Home, CalendarCheck, LogOut, Save, Upload, CircleHelp, Banknote, ClipboardList, Gauge, BellRing } from 'lucide-react';
+import { ArrowDownRight, ArrowLeft, ArrowRight, CalendarDays, Check, ChevronDown, Clock3, CreditCard, MapPin, Menu, MessageCircle, Minus, Plus, Settings2, ShieldCheck, Sparkles, UserRound, Wrench, X, CarFront, Camera, Phone, Home, CalendarCheck, LogOut, Save, Upload, CircleHelp, Banknote, ClipboardList, Gauge } from 'lucide-react';
 
 type Service = {
   id: string;
@@ -168,10 +168,18 @@ function App() {
   const [privacyConsent, setPrivacyConsent] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [bookingAttemptKey, setBookingAttemptKey] = useState(uid());
-  const [myBooking, setMyBooking] = useState<{
+  const [myBookings, setMyBookings] = useState<{
     booking: Booking;
     token: string;
-  } | null>(() => { try { return JSON.parse(localStorage.getItem(`autostudio-booking-${route.slug}`) || 'null'); } catch { return null; } });
+  }[]>(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(`autostudio-bookings-${route.slug}`) || 'null');
+      if (Array.isArray(raw)) return raw;
+      const legacy = JSON.parse(localStorage.getItem(`autostudio-booking-${route.slug}`) || 'null');
+      return legacy?.booking && legacy?.token ? [legacy] : [];
+    } catch { return []; }
+  });
+  const [mapLoaded, setMapLoaded] = useState(false);
   const [showMyBooking, setShowMyBooking] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [chatInput, setChatInput] = useState('');
@@ -205,13 +213,7 @@ function App() {
   useEffect(() => { const listener = (e: Event) => { e.preventDefault(); setInstallPrompt(e); }; window.addEventListener('beforeinstallprompt', listener); return () => window.removeEventListener('beforeinstallprompt', listener); }, []);
   useEffect(() => { if (ownerToken && route.owner) refreshOwner().catch(() => { setOwnerToken(''); sessionStorage.removeItem(`autostudio-owner-${route.slug}`); }); }, [ownerToken, route.owner]);
   useEffect(() => {
-    // Never leave slots from a previous date/service visible while the next request loads.
-    setSlots([]);
-    setSlot(null);
-    if (!bookingOpen || !selectedService) {
-      setSlotsLoading(false);
-      return;
-    }
+    if (!bookingOpen || !selectedService) return;
     setSlotsLoading(true);
     if (DEMO_MODE) {
       const days: DaySlots[] = Array.from({ length: 10 }, (_, i) => {
@@ -243,7 +245,7 @@ function App() {
     const controller = new AbortController();
     setSlotsLoading(true);
     api<{ days: DaySlots[]; }>(
-      `/public/${route.slug}/availability?service_id=${encodeURIComponent(selectedService)}&day=${selectedDay}&days=10`,
+      `/public/${route.slug}/availability?service_id=${encodeURIComponent(selectedService)}&day=${selectedDay}&days=7`,
       { signal: controller.signal, cache: 'no-store' },
     ).then(d => {
       if (!controller.signal.aborted) setSlots(d.days);
@@ -310,9 +312,12 @@ function App() {
         })
       });
       const saved = { booking: data.booking, token: data.cancel_token };
-      setMyBooking(saved);
+      setMyBookings(previous => {
+        const next = [saved, ...previous.filter(item => item.booking.public_id !== saved.booking.public_id)];
+        localStorage.setItem(`autostudio-bookings-${route.slug}`, JSON.stringify(next));
+        return next;
+      });
       setBookingAttemptKey(uid());
-      localStorage.setItem(`autostudio-booking-${route.slug}`, JSON.stringify(saved));
       setBookingOpen(false);
       setShowMyBooking(true);
       setSection('mine');
@@ -385,6 +390,16 @@ function App() {
       notify('Статус обновлён');
     } catch (e) {
       notify(e instanceof Error ? e.message : 'Ошибка');
+    }
+  }
+  async function clearBooking(b: Booking) {
+    if (!b.id || !window.confirm(`Освободить слот ${dateTime(b.start_at)}? Запись будет помечена отменённой.`)) return;
+    try {
+      await api(`/owner/${route.slug}/bookings/${b.id}`, { method: 'DELETE' }, ownerToken);
+      await refreshOwner();
+      notify('Слот освобождён');
+    } catch (e) {
+      notify(e instanceof Error ? e.message : 'Не удалось освободить слот');
     }
   }
   async function rescheduleBooking(b: Booking) {
@@ -463,14 +478,20 @@ function App() {
     setOwnerData((p: any) => ({ ...p, config: cfg }));
     notify('Фото загружено — сохраните настройки');
   }
-  async function cancelBooking() {
-    if (!myBooking) return;
+  async function cancelBooking(entry: { booking: Booking; token: string }) {
     setCancelLoading(true);
     try {
-      await api(`/public/${route.slug}/booking/${myBooking.booking.public_id}/cancel`, { method: 'POST', body: JSON.stringify({ token: myBooking.token }) });
-      const next = { ...myBooking, booking: { ...myBooking.booking, status: 'cancelled' } };
-      setMyBooking(next);
-      localStorage.setItem(`autostudio-booking-${route.slug}`, JSON.stringify(next));
+      await api(`/public/${route.slug}/booking/${entry.booking.public_id}/cancel`, {
+        method: 'POST',
+        body: JSON.stringify({ token: entry.token }),
+      });
+      setMyBookings(previous => {
+        const next = previous.map(item => item.booking.public_id === entry.booking.public_id
+          ? { ...item, booking: { ...item.booking, status: 'cancelled' } }
+          : item);
+        localStorage.setItem(`autostudio-bookings-${route.slug}`, JSON.stringify(next));
+        return next;
+      });
       notify('Запись отменена');
     } catch (e) {
       notify(e instanceof Error ? e.message : 'Не удалось отменить');
@@ -611,7 +632,7 @@ function App() {
               <button className="text-button" onClick={() => setOwnerTab('bookings')}>Все записи <ArrowRight size={15} />
               </button>
             </div>
-            <BookingTable rows={ownerData?.today || []} onStatus={changeBooking} onPayment={recordPayment} onReschedule={rescheduleBooking} />
+            <BookingTable rows={ownerData?.today || []} onStatus={changeBooking} onPayment={recordPayment} onReschedule={rescheduleBooking} onClear={clearBooking} />
           </section>
           <section className="owner-panel assistant-owner">
             <div className="panel-heading">
@@ -1025,14 +1046,19 @@ function App() {
                 <em>Построить маршрут <ArrowUpRightIcon /></em>
               </div>
             </a>
-            <div className="contact-map-frame">
-              <iframe
+            <div className={`contact-map-frame${mapLoaded ? ' map-is-loaded' : ''}`}>
+              {mapLoaded ? <iframe
                 title={`Яндекс Карты — ${config.address}`}
                 src={`https://yandex.ru/map-widget/v1/?text=${encodeURIComponent(config.address || '')}&z=16&l=map`}
                 loading="lazy"
-                referrerPolicy="no-referrer-when-downgrade"
+                referrerPolicy="no-referrer"
                 allowFullScreen
-              />
+              /> : <div className="map-placeholder">
+                <MapPin size={28} />
+                <b>Карта студии</b>
+                <span>{config.address}</span>
+                <button className="button primary" onClick={() => setMapLoaded(true)}>Загрузить карту</button>
+              </div>}
             </div>
           </div>
           <a className="contact-phone" href={`tel:${config.phone.replace(/[^+\d]/g, '')}`}>
@@ -1126,7 +1152,7 @@ function App() {
               <span>Дата и время</span>
             </div>
             <div className="date-scroller">{Array.from({ length: 10 }, (_, i) => {
-              const d = new Date(`${todayISO(config.timezone)}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + i); const iso = d.toISOString().slice(0, 10); return <button type="button" className={`date-chip ${selectedDay === iso ? 'selected' : ''}`} key={iso} onClick={() => { setSelectedDay(iso); setSlots([]); setSlot(null); setBookingAttemptKey(uid()); }}>
+              const d = new Date(`${todayISO(config.timezone)}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + i); const iso = d.toISOString().slice(0, 10); return <button type="button" className={`date-chip ${selectedDay === iso ? 'selected' : ''}`} key={iso} onClick={() => { setSelectedDay(iso); setSlot(null); setBookingAttemptKey(uid()); }}>
                 <small>{i === 0 ? 'Сегодня' : i === 1 ? 'Завтра' : new Intl.DateTimeFormat('ru-RU', { weekday: 'short', timeZone: 'UTC' }).format(d)}</small>
                 <b>{d.getUTCDate()}</b>
                 <small>{new Intl.DateTimeFormat('ru-RU', { month: 'short', timeZone: 'UTC' }).format(d)}</small>
@@ -1169,70 +1195,42 @@ function App() {
           <button className="icon-button" onClick={() => setShowMyBooking(false)}>
             <X />
           </button>
-        </div>{myBooking ? <>
-          <div className={`booking-status ${myBooking.booking.status === 'cancelled' ? 'cancelled' : ''}`}>
-            <span>{myBooking.booking.status === 'cancelled' ? <X size={18} /> : <Check size={18} />}</span>
-            <div>
-              <b>{myBooking.booking.status === 'cancelled' ? 'Запись отменена' : 'Запись подтверждена'}</b>
-              <small>{myBooking.booking.status === 'cancelled' ? 'Если планы изменятся, создайте новую запись.' : 'Сохраните детали визита или добавьте его в календарь.'}</small>
+        </div>{myBookings.length ? <div className="my-bookings-list">
+          {myBookings.map(entry => <article className="my-booking-entry" key={entry.booking.public_id}>
+            <div className={`booking-status ${entry.booking.status === 'cancelled' ? 'cancelled' : ''}`}>
+              <span>{entry.booking.status === 'cancelled' ? <X size={18} /> : <Check size={18} />}</span>
+              <div>
+                <b>{entry.booking.status === 'cancelled' ? 'Запись отменена' : 'Запись подтверждена'}</b>
+                <small>{entry.booking.status === 'cancelled' ? 'Слот освобождён.' : 'Сохраните детали визита или добавьте его в календарь.'}</small>
+              </div>
             </div>
-          </div>
-          <div className="booking-details">
-            <div>
-              <small>УСЛУГА</small>
-              <b>{myBooking.booking.service_title}</b>
+            <div className="booking-details">
+              <div><small>УСЛУГА</small><b>{entry.booking.service_title}</b></div>
+              <div><small>ДАТА И ВРЕМЯ</small><b>{dateTime(entry.booking.start_at)}</b></div>
+              <div><small>ИМЯ</small><b>{entry.booking.customer_name}</b></div>
+              <div><small>АВТОМОБИЛЬ</small><b>{entry.booking.car}</b></div>
+              <div><small>ТЕЛЕФОН</small><b>{entry.booking.phone}</b></div>
             </div>
-            <div>
-              <small>ДАТА И ВРЕМЯ</small>
-              <b>{dateTime(myBooking.booking.start_at)}</b>
+            <div className="booking-actions">
+              <a className="button primary full" href={`${API}/public/${route.slug}/booking/${entry.booking.public_id}/calendar.ics?token=${encodeURIComponent(entry.token)}`}>
+                <CalendarDays size={17} /> Добавить в календарь
+              </a>
+              {['booked', 'confirmed'].includes(entry.booking.status) && <button className="cancel-booking button soft full" onClick={() => cancelBooking(entry)} disabled={cancelLoading}>
+                {cancelLoading ? 'Отменяем…' : `Отменить запись${config.cancellation_hours ? ` (не позднее чем за ${config.cancellation_hours} ч.)` : ''}`}
+              </button>}
             </div>
-            <div>
-              <small>ИМЯ</small>
-              <b>{myBooking.booking.customer_name}</b>
-            </div>
-            <div>
-              <small>АВТОМОБИЛЬ</small>
-              <b>{myBooking.booking.car}</b>
-            </div>
-            <div>
-              <small>ТЕЛЕФОН</small>
-              <b>{myBooking.booking.phone}</b>
-            </div>
-          </div>
-          <div className="booking-actions">
-            <a className="button primary full" href={`${API}/public/${route.slug}/booking/${myBooking.booking.public_id}/calendar.ics?token=${encodeURIComponent(myBooking.token)}`}>
-              <CalendarDays size={17} /> Добавить в календарь</a>
-            <button className="button soft full" onClick={async () => {
-              if (!('Notification' in window)) {
-                notify('Уведомления не поддерживаются — добавьте запись в календарь');
-                return;
-              } const scheduleReminder = () => {
-                const delay = new Date(myBooking.booking.start_at).getTime() - Date.now() - 24 * 60 * 60 * 1000;
-                if (delay <= 0) {
-                  notify('До визита меньше суток. Добавьте запись в календарь для напоминания.');
-                  return;
-                } window.setTimeout(() => { if (Notification.permission === 'granted') new Notification(config.name, { body: `Завтра визит: ${myBooking.booking.service_title} в ${myBooking.booking.start_at.slice(11, 16)}` }); }, Math.min(delay, 2147480000));
-                notify('Напоминание запланировано, пока страница открыта. Для надёжного напоминания добавьте запись в календарь.');
-              };
-              if (Notification.permission === 'granted') {
-                scheduleReminder();
-              } else {
-                const p = await Notification.requestPermission();
-                if (p === 'granted') scheduleReminder();
-                else notify('Добавьте запись в календарь, чтобы получить надёжное напоминание.');
-              }
-            }}>
-              <BellRing size={17} /> Включить напоминание</button>{['booked', 'confirmed'].includes(myBooking.booking.status) && <button className="cancel-booking" onClick={cancelBooking} disabled={cancelLoading}>{cancelLoading ? 'Отменяем…' : `Отменить запись${config.cancellation_hours ? ` (не позднее чем за ${config.cancellation_hours} ч.)` : ''}`}</button>}</div>
-        </> : <div className="no-booking">
+          </article>)}
+        </div> : <div className="no-booking">
           <CalendarDays size={34} />
-          <h3>Здесь появится ваша запись</h3>
+          <h3>Здесь появятся ваши записи</h3>
           <p>После отправки заявки её детали будут доступны здесь на этом устройстве.</p>
           <button className="button primary" onClick={() => {
             setShowMyBooking(false);
             openBooking();
           }}>Записаться <ArrowRight size={16} />
           </button>
-        </div>}</div>
+        </div>}
+      </div>
     </div>}
     {assistantOpen && <div className="assistant-panel">
       <div className="assistant-head">
@@ -1280,7 +1278,7 @@ function App() {
 function ArrowUpRightIcon() {
   return <ArrowRight size={17} className="arrow-up-right" />;
 }
-function BookingTable({ rows, onStatus, onPayment, onReschedule, full = false }: { rows: Booking[]; onStatus: (b: Booking, s: string) => void; onPayment?: (b: Booking, k: 'payment' | 'refund') => void; onReschedule?: (b: Booking) => void; full?: boolean; }) {
+function BookingTable({ rows, onStatus, onPayment, onReschedule, onClear, full = false }: { rows: Booking[]; onStatus: (b: Booking, s: string) => void; onPayment?: (b: Booking, k: 'payment' | 'refund') => void; onReschedule?: (b: Booking) => void; onClear?: (b: Booking) => void; full?: boolean; }) {
   if (!rows.length) return <div className="table-empty">
     <CalendarDays size={28} />
     <b>Пока нет записей</b>
@@ -1332,6 +1330,9 @@ function BookingTable({ rows, onStatus, onPayment, onReschedule, full = false }:
                 <CreditCard size={14} /> +</button>
               <button onClick={() => onPayment?.(b, 'refund')} title="Записать возврат">
                 <Minus size={14} /> ↩</button>
+              {!['cancelled', 'rejected'].includes(b.status) && <button onClick={() => onClear?.(b)} title="Освободить слот" aria-label="Освободить слот">
+                <X size={14} />
+              </button>}
             </div>
           </td>
         </tr>)}</tbody>
