@@ -832,8 +832,6 @@ function App() {
       }}>Установить <Plus size={14} />
       </button>}<a className="phone-link" href={`tel:${config.phone.replace(/[^+\d]/g, '')}`}>
           <Phone size={15} />{config.phone}</a>
-        <button className="button primary top-book" onClick={() => openBooking()}>Записаться <ArrowRight size={16} />
-        </button>
         <a
           className="owner-shortcut"
           href={appPath(`owner/${route.slug}/`)}
@@ -923,7 +921,7 @@ function App() {
         </div>
         <div className="service-grid">{activeServices.map((s, i) =>
           <article className="service-card reveal" key={s.id}>
-            <div className="service-image">{s.image ? <img src={s.image} alt={s.title} loading="lazy" decoding="async" fetchPriority="low" onError={(event) => { const image = event.currentTarget; if (image.dataset.fallbackApplied === 'true') return; image.dataset.fallbackApplied = 'true'; image.src = 'https://images.unsplash.com/photo-1520340356584-f9917d1eea6f?auto=format&fit=crop&w=900&q=80'; }} /> : <div className="service-image-placeholder">
+            <div className="service-image">{s.image ? <img src={s.image} alt={s.title} loading="lazy" decoding="async" fetchPriority="low" /> : <div className="service-image-placeholder">
               <Wrench size={34} />
             </div>}<span className="service-number">0{i + 1}</span>
               <button className="circle-arrow" aria-label={`Записаться: ${s.title}`} onClick={() => openBooking(s.id)}>
