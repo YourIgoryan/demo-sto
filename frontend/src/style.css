@@ -312,17 +312,83 @@
 .demo-ribbon { position: relative; z-index: 30; padding: 8px 16px; text-align: center; background: #c8f169; color: #111311; font-size: 11px; font-weight: 800; letter-spacing: .12em; }
 
 
-/* Performance and booking management refinements */
-.map-placeholder{height:100%;min-height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:22px;text-align:center;background:radial-gradient(ellipse at center,#27301f 0%,#171a16 72%);color:#c8f169}
-.map-placeholder b{font-family:Manrope,sans-serif;font-size:18px;color:#f3f4ef}
-.map-placeholder span{font-size:12px;line-height:1.5;color:#b7bbae}
-.map-placeholder .button{margin-top:6px}
-.my-bookings-list{display:grid;gap:18px}
-.my-booking-entry{padding:18px;border:1px solid var(--line);border-radius:12px;background:#151814;min-width:0}
-.my-booking-entry .booking-details{margin:14px 0}
-.my-booking-entry .booking-actions{display:grid;grid-template-columns:1fr;gap:10px}
-.my-booking-entry .cancel-booking{min-height:54px;padding:16px 20px;font-size:14px;font-weight:800;white-space:normal}
-.my-booking-entry .booking-actions .button.primary{min-height:54px;font-size:14px}
-.payment-actions button[aria-label="Освободить слот"]{color:#ffb4a9;border-color:rgba(255,180,169,.35)}
-.payment-actions button[aria-label="Освободить слот"]:hover{background:rgba(255,90,70,.13)}
-@media(max-width:600px){.my-booking-entry{padding:13px}.my-booking-entry .booking-details{grid-template-columns:minmax(0,1fr)}.my-booking-entry .booking-actions .button{white-space:normal;line-height:1.35}}
+/* Mobile service cards: keep each image and its service details in normal flow. */
+@media (max-width: 700px) {
+  .services-section {
+    position: relative;
+    isolation: isolate;
+    overflow: visible;
+  }
+  .services-section .section-heading {
+    position: relative;
+    display: block;
+    margin: 0 0 28px;
+    padding: 0;
+  }
+  .services-section .section-heading > div,
+  .services-section .section-intro {
+    position: relative;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+  .services-section .section-intro {
+    margin: 18px 0 0;
+  }
+  .services-section .service-grid {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-auto-flow: row;
+    grid-auto-rows: auto;
+    align-items: start;
+    gap: 16px;
+    width: 100%;
+  }
+  .services-section .service-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-self: stretch;
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    margin: 0;
+    transform: none;
+  }
+  .services-section .service-image {
+    position: relative;
+    display: block;
+    flex: 0 0 auto;
+    width: 100%;
+    height: clamp(190px, 58vw, 260px);
+    min-height: 190px;
+    margin: 0;
+    overflow: hidden;
+  }
+  .services-section .service-image > img {
+    position: relative;
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .services-section .service-info {
+    position: relative;
+    display: block;
+    flex: 0 0 auto;
+    width: 100%;
+    min-width: 0;
+    height: auto;
+  }
+  .services-section .service-title-line {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .services-section .service-title-line h3 {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+}
