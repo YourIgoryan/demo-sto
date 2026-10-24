@@ -14,7 +14,6 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from .db import connect, init_db, ROOT
 from .security import hash_password, verify_password, issue_token, read_token
-from .whatsapp import notify_booking_whatsapp
 
 TENANTS = ROOT / "tenants"
 TENANTS.mkdir(parents=True, exist_ok=True)
@@ -300,13 +299,6 @@ def create_booking(slug: str, body: BookingBody, request: Request, idempotency_k
             public_id = secrets.token_urlsafe(24); now = now_iso()
             c.execute("INSERT INTO bookings(tenant,public_id,idempotency_key,service_id,service_title,duration_minutes,prep_minutes,box_id,start_at,end_at,customer_name,phone,car,note,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (slug, public_id, key, str(service["id"]), service["title"], duration, prep, box["id"], start.isoformat(), end.isoformat(), body.customer_name.strip(), body.phone.strip(), body.car.strip(), body.note.strip(), "booked", now, now))
             row = c.execute("SELECT * FROM bookings WHERE public_id=?", (public_id,)).fetchone(); c.execute("COMMIT")
-            # Notify the owner only after the new booking has been committed.
-            # WhatsApp failures must not affect the customer's successful booking.
-            try:
-                notify_booking_whatsapp(public_booking(row))
-            except Exception:
-                import logging
-                logging.getLogger(__name__).exception("Unexpected WhatsApp notification error")
             return {"booking": public_booking(row), "cancel_token": public_id, "duplicate": False}
         except HTTPException: raise
         except sqlite3.IntegrityError:
