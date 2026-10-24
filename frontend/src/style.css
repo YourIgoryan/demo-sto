@@ -508,3 +508,46 @@
 @media (max-width: 700px) {
   .booking-actions .cancel-booking { font-size: 12px; min-height: 46px; }
 }
+
+
+/* Desktop only: keep brand, navigation and actions on one horizontal line.
+   Mobile/tablet rules above are intentionally untouched. */
+@media (min-width: 1100px) {
+  .topbar {
+    grid-template-columns: auto minmax(0, 1fr) auto !important;
+    grid-template-areas: "brand nav actions" !important;
+    align-items: center !important;
+    column-gap: clamp(18px, 2vw, 32px) !important;
+    row-gap: 0 !important;
+    padding-top: 10px !important;
+    padding-bottom: 10px !important;
+  }
+  .topbar > .brand {
+    width: max-content !important;
+    flex-wrap: nowrap !important;
+  }
+  .topbar > .desktop-nav {
+    flex-wrap: nowrap !important;
+    justify-content: center !important;
+    gap: clamp(18px, 2vw, 34px) !important;
+    padding-top: 0 !important;
+    white-space: nowrap !important;
+  }
+  .topbar > .desktop-nav > button {
+    flex: 0 0 auto !important;
+    white-space: nowrap !important;
+    font-size: 15px !important;
+    padding: 9px 3px !important;
+  }
+  .topbar > .top-actions {
+    flex-wrap: nowrap !important;
+    gap: clamp(10px, 1.2vw, 18px) !important;
+    white-space: nowrap !important;
+  }
+  .topbar > .top-actions .phone-link { font-size: 13px !important; }
+  .topbar > .top-actions .top-book,
+  .topbar > .top-actions .install-button {
+    font-size: 13px !important;
+    white-space: nowrap !important;
+  }
+}
