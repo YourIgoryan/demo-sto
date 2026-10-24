@@ -1210,27 +1210,7 @@ function App() {
           <div className="booking-actions">
             <a className="button primary full" href={`${API}/public/${route.slug}/booking/${myBooking.booking.public_id}/calendar.ics?token=${encodeURIComponent(myBooking.token)}`}>
               <CalendarDays size={17} /> Добавить в календарь</a>
-            <button className="button soft full" onClick={async () => {
-              if (!('Notification' in window)) {
-                notify('Уведомления не поддерживаются — добавьте запись в календарь');
-                return;
-              } const scheduleReminder = () => {
-                const delay = new Date(myBooking.booking.start_at).getTime() - Date.now() - 24 * 60 * 60 * 1000;
-                if (delay <= 0) {
-                  notify('До визита меньше суток. Добавьте запись в календарь для напоминания.');
-                  return;
-                } window.setTimeout(() => { if (Notification.permission === 'granted') new Notification(config.name, { body: `Завтра визит: ${myBooking.booking.service_title} в ${myBooking.booking.start_at.slice(11, 16)}` }); }, Math.min(delay, 2147480000));
-                notify('Напоминание запланировано, пока страница открыта. Для надёжного напоминания добавьте запись в календарь.');
-              };
-              if (Notification.permission === 'granted') {
-                scheduleReminder();
-              } else {
-                const p = await Notification.requestPermission();
-                if (p === 'granted') scheduleReminder();
-                else notify('Добавьте запись в календарь, чтобы получить надёжное напоминание.');
-              }
-            }}>
-              <BellRing size={17} /> Включить напоминание</button>{['booked', 'confirmed'].includes(myBooking.booking.status) && <button className="cancel-booking" onClick={cancelBooking} disabled={cancelLoading}>{cancelLoading ? 'Отменяем…' : `Отменить запись${config.cancellation_hours ? ` (не позднее чем за ${config.cancellation_hours} ч.)` : ''}`}</button>}</div>
+            {['booked', 'confirmed'].includes(myBooking.booking.status) && <button className="button soft full cancel-booking" onClick={cancelBooking} disabled={cancelLoading}>{cancelLoading ? 'Отменяем…' : `Отменить запись${config.cancellation_hours ? ` (не позднее чем за ${config.cancellation_hours} ч.)` : ''}`}</button>}</div>
         </> : <div className="no-booking">
           <CalendarDays size={34} />
           <h3>Здесь появится ваша запись</h3>

@@ -451,3 +451,60 @@
   .topbar > .brand small { font-size: 5px; }
   .topbar > .top-actions { gap: 4px !important; }
 }
+
+
+/* Desktop-only polish: larger navigation text and clearer spacing. Mobile styles remain unchanged. */
+@media (min-width: 901px) {
+  .topbar > .desktop-nav {
+    gap: clamp(30px, 3.2vw, 52px) !important;
+  }
+  .topbar > .desktop-nav > button {
+    font-size: 15px !important;
+    gap: 10px !important;
+    padding: 9px 4px !important;
+  }
+  .topbar > .desktop-nav > button > svg {
+    width: 19px !important;
+    height: 19px !important;
+  }
+  .topbar > .top-actions {
+    gap: 14px !important;
+  }
+  .topbar > .top-actions .phone-link {
+    font-size: 13px !important;
+  }
+  .topbar > .top-actions .top-book,
+  .topbar > .top-actions .install-button {
+    font-size: 13px !important;
+  }
+}
+
+/* Cancellation uses the same full-width button treatment as the other booking actions. */
+.booking-actions .cancel-booking {
+  display: inline-flex;
+  width: 100%;
+  min-height: 46px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #30362b;
+  border-radius: 7px;
+  padding: 13px 17px;
+  background: #242820;
+  color: #eff1e8;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: center;
+  text-decoration: none;
+  text-underline-offset: initial;
+  transition: transform .2s, background .2s, border-color .2s;
+}
+.booking-actions .cancel-booking:hover:not(:disabled) {
+  transform: translateY(-1px);
+  background: #30362b;
+  border-color: #505a43;
+}
+@media (max-width: 700px) {
+  .booking-actions .cancel-booking { font-size: 12px; min-height: 46px; }
+}
