@@ -10,3 +10,5 @@ tenants/*/media/*
 
 bot/.env
 bot/.last_booking_*.txt
+
+*.telegram-backup

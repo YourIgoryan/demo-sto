@@ -134,6 +134,10 @@ def init_db() -> None:
                     status TEXT NOT NULL DEFAULT 'booked',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
+                    telegram_user_id TEXT,
+                    source TEXT NOT NULL DEFAULT 'direct',
+                    medium TEXT NOT NULL DEFAULT '',
+                    campaign TEXT NOT NULL DEFAULT '',
                     CONSTRAINT bookings_tenant_idempotency_unique UNIQUE (tenant, idempotency_key)
                 )
             """)
@@ -148,9 +152,42 @@ def init_db() -> None:
                     created_at TEXT NOT NULL
                 )
             """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS notification_outbox (
+                    id BIGSERIAL PRIMARY KEY,
+                    tenant TEXT NOT NULL,
+                    event_key TEXT NOT NULL UNIQUE,
+                    recipient_type TEXT NOT NULL,
+                    recipient_id TEXT NOT NULL DEFAULT '',
+                    message TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    next_attempt_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    sent_at TEXT,
+                    last_error TEXT NOT NULL DEFAULT ''
+                )
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS analytics_events (
+                    id BIGSERIAL PRIMARY KEY,
+                    tenant TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    event_key TEXT NOT NULL UNIQUE,
+                    source TEXT NOT NULL DEFAULT 'direct',
+                    medium TEXT NOT NULL DEFAULT '',
+                    campaign TEXT NOT NULL DEFAULT '',
+                    booking_id BIGINT,
+                    created_at TEXT NOT NULL
+                )
+            """)
+            for col, definition in (("telegram_user_id", "TEXT"), ("source", "TEXT NOT NULL DEFAULT 'direct'"), ("medium", "TEXT NOT NULL DEFAULT ''"), ("campaign", "TEXT NOT NULL DEFAULT ''")):
+                c.execute(f"ALTER TABLE bookings ADD COLUMN IF NOT EXISTS {col} {definition}")
             c.execute("CREATE INDEX IF NOT EXISTS idx_bookings_tenant_start ON bookings(tenant, start_at)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_bookings_tenant_box_interval ON bookings(tenant, box_id, start_at, end_at)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_payments_tenant_created ON payments(tenant, created_at)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_outbox_pending ON notification_outbox(tenant, status, next_attempt_at)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_analytics_tenant_created ON analytics_events(tenant, created_at)")
         return
 
     with connect() as c:
@@ -183,6 +220,10 @@ def init_db() -> None:
                 status TEXT NOT NULL DEFAULT 'booked',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
+                telegram_user_id TEXT,
+                source TEXT NOT NULL DEFAULT 'direct',
+                medium TEXT NOT NULL DEFAULT '',
+                campaign TEXT NOT NULL DEFAULT '',
                 UNIQUE (tenant, idempotency_key)
             )
         """)
@@ -197,6 +238,42 @@ def init_db() -> None:
                 created_at TEXT NOT NULL
             )
         """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS notification_outbox (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tenant TEXT NOT NULL,
+                event_key TEXT NOT NULL UNIQUE,
+                recipient_type TEXT NOT NULL,
+                recipient_id TEXT NOT NULL DEFAULT '',
+                message TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                next_attempt_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                sent_at TEXT,
+                last_error TEXT NOT NULL DEFAULT ''
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS analytics_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tenant TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                event_key TEXT NOT NULL UNIQUE,
+                source TEXT NOT NULL DEFAULT 'direct',
+                medium TEXT NOT NULL DEFAULT '',
+                campaign TEXT NOT NULL DEFAULT '',
+                booking_id INTEGER,
+                created_at TEXT NOT NULL
+            )
+        """)
+        # Safe migration for an existing SQLite database.
+        columns = {row[1] for row in c.execute("PRAGMA table_info(bookings)").fetchall()}
+        for col, definition in (("telegram_user_id", "TEXT"), ("source", "TEXT NOT NULL DEFAULT 'direct'"), ("medium", "TEXT NOT NULL DEFAULT ''"), ("campaign", "TEXT NOT NULL DEFAULT ''")):
+            if col not in columns:
+                c.execute(f"ALTER TABLE bookings ADD COLUMN {col} {definition}")
         c.execute("CREATE INDEX IF NOT EXISTS idx_bookings_tenant_start ON bookings(tenant, start_at)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_bookings_tenant_box_interval ON bookings(tenant, box_id, start_at, end_at)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_payments_tenant_created ON payments(tenant, created_at)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_outbox_pending ON notification_outbox(tenant, status, next_attempt_at)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_analytics_tenant_created ON analytics_events(tenant, created_at)")

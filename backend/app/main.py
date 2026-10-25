@@ -1,6 +1,6 @@
 from __future__ import annotations
-import html, json, os, re, secrets, sqlite3, time
-from urllib.parse import urlparse
+import html, json, os, re, secrets, sqlite3, time, hmac, hashlib
+from urllib.parse import urlparse, parse_qsl
 import httpx
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from .db import connect, init_db, ROOT
+from .db import connect, init_db, ROOT, DatabaseIntegrityError
 from .security import hash_password, verify_password, issue_token, read_token
 
 TENANTS = ROOT / "tenants"
@@ -123,14 +123,62 @@ class BookingBody(BaseModel):
     service_id: str; start_at: str; customer_name: str = Field(min_length=2, max_length=100)
     phone: str = Field(min_length=5, max_length=40); car: str = Field(min_length=2, max_length=120)
     note: str = Field(default="", max_length=1000); box_id: str | None = None
+    source: str = Field(default="direct", max_length=80); medium: str = Field(default="", max_length=80)
+    campaign: str = Field(default="", max_length=100); telegram_init_data: str = Field(default="", max_length=4096)
 class CancelBody(BaseModel): token: str
 class AssistantBody(BaseModel): message: str = Field(min_length=1, max_length=500); booking_date: str | None = None
 class BookingUpdate(BaseModel): status: str | None = None; start_at: str | None = None; box_id: str | None = None; note: str | None = None
 class ManualBooking(BaseModel): service_id: str; start_at: str; customer_name: str; phone: str; car: str; note: str = ""; box_id: str | None = None
 class PaymentBody(BaseModel): kind: str = "payment"; amount: int = Field(gt=0, le=100000000); note: str = ""
 
+def _clean_attribution(value: str, default: str = "") -> str:
+    value = re.sub(r"[^a-zA-Z0-9_.:/ -]", "", str(value or "")).strip()[:100]
+    return value or default
+
+def telegram_user_from_init_data(init_data: str) -> str | None:
+    """Validate Telegram Mini App initData; never trust initDataUnsafe from the browser."""
+    token = os.getenv("BOT_TOKEN", "").strip()
+    if not init_data or not token:
+        return None
+    try:
+        values = dict(parse_qsl(init_data, keep_blank_values=True, strict_parsing=True))
+        supplied_hash = values.pop("hash", "")
+        auth_date = int(values.get("auth_date", "0"))
+        if not supplied_hash or auth_date > int(time.time()) + 30 or int(time.time()) - auth_date > 86400:
+            return None
+        check_string = "\n".join(f"{key}={values[key]}" for key in sorted(values))
+        secret_key = hmac.new(b"WebAppData", token.encode(), hashlib.sha256).digest()
+        expected = hmac.new(secret_key, check_string.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, supplied_hash):
+            return None
+        user = json.loads(values.get("user", "{}"))
+        user_id = user.get("id")
+        return str(int(user_id)) if user_id else None
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return None
+
+def enqueue_notification(c, tenant: str, event_key: str, recipient_type: str, recipient_id: str, message: str) -> None:
+    now = now_iso()
+    c.execute(
+        "INSERT INTO notification_outbox(tenant,event_key,recipient_type,recipient_id,message,status,attempts,next_attempt_at,created_at) "
+        "VALUES(?,?,?,?,?,'pending',0,?,?) ON CONFLICT(event_key) DO NOTHING",
+        (tenant, event_key[:180], recipient_type, str(recipient_id or ""), message[:3500], now, now),
+    )
+
+def _event(c, tenant: str, event_type: str, event_key: str, source: str = "direct", medium: str = "", campaign: str = "", booking_id: int | None = None) -> None:
+    now = now_iso()
+    c.execute(
+        "INSERT INTO analytics_events(tenant,event_type,event_key,source,medium,campaign,booking_id,created_at) "
+        "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(event_key) DO NOTHING",
+        (tenant, event_type, event_key[:180], _clean_attribution(source, "direct"), _clean_attribution(medium), _clean_attribution(campaign), booking_id, now),
+    )
+
+def _when(value: str) -> str:
+    try: return datetime.fromisoformat(str(value)).strftime("%d.%m.%Y в %H:%M")
+    except Exception: return str(value)
+
 @app.get("/api/health")
-def health(): return {"status": "ok"}
+def health(): return {"status": "ok", "service": "autostudio-api"}
 
 # Small in-memory cache for external photos. This keeps repeat views fast and
 # avoids requiring visitors' browsers to contact third-party image CDNs directly.
@@ -226,6 +274,19 @@ def icon(slug: str):
     if not re.fullmatch(r"#[0-9a-fA-F]{6}", str(color)): color = "#b5f36b"
     svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"><rect width="128" height="128" rx="30" fill="{color}"/><text x="64" y="84" font-size="72" font-family="Arial,sans-serif" font-weight="700" text-anchor="middle" fill="#101215">{initial}</text></svg>'
     return Response(svg, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=300"})
+
+@app.post("/api/public/{slug}/analytics/visit")
+def analytics_visit(slug: str, body: dict[str, Any], request: Request):
+    load_config(slug)
+    session_id = str(body.get("session_id", ""))[:100]
+    if not re.fullmatch(r"[A-Za-z0-9_-]{8,100}", session_id):
+        raise HTTPException(422, "Некорректный идентификатор сессии")
+    source = _clean_attribution(str(body.get("source", "direct")), "direct")
+    medium = _clean_attribution(str(body.get("medium", "")))
+    campaign = _clean_attribution(str(body.get("campaign", "")))
+    with connect() as c:
+        _event(c, slug, "visit", f"visit:{slug}:{session_id}", source, medium, campaign)
+    return {"ok": True}
 
 @app.get("/api/public/{slug}/availability")
 def availability(slug: str, service_id: str, day: str, days: int = 7):
@@ -356,11 +417,23 @@ def create_booking(slug: str, body: BookingBody, request: Request, idempotency_k
                 if not interval_conflict(c, slug, b["id"], start, end): box = b; break
             if not box: c.execute("ROLLBACK"); raise HTTPException(409, "Это время уже занято. Выберите другой слот.")
             public_id = secrets.token_urlsafe(24); now = now_iso()
-            c.execute("INSERT INTO bookings(tenant,public_id,idempotency_key,service_id,service_title,duration_minutes,prep_minutes,box_id,start_at,end_at,customer_name,phone,car,note,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (slug, public_id, key, str(service["id"]), service["title"], duration, prep, box["id"], start.isoformat(), end.isoformat(), body.customer_name.strip(), body.phone.strip(), body.car.strip(), body.note.strip(), "booked", now, now))
-            row = c.execute("SELECT * FROM bookings WHERE public_id=?", (public_id,)).fetchone(); c.execute("COMMIT")
+            telegram_user_id = telegram_user_from_init_data(body.telegram_init_data)
+            source = _clean_attribution(body.source, "direct")
+            medium = _clean_attribution(body.medium)
+            campaign = _clean_attribution(body.campaign)
+            c.execute("INSERT INTO bookings(tenant,public_id,idempotency_key,service_id,service_title,duration_minutes,prep_minutes,box_id,start_at,end_at,customer_name,phone,car,note,status,created_at,updated_at,telegram_user_id,source,medium,campaign) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (slug, public_id, key, str(service["id"]), service["title"], duration, prep, box["id"], start.isoformat(), end.isoformat(), body.customer_name.strip(), body.phone.strip(), body.car.strip(), body.note.strip(), "booked", now, now, telegram_user_id, source, medium, campaign))
+            row = c.execute("SELECT * FROM bookings WHERE public_id=?", (public_id,)).fetchone()
+            start_text = _when(start.isoformat())
+            owner_text = f"Новая запись #{row['id']}\nДата: {start_text}\nУслуга: {service['title']}\nКлиент: {body.customer_name.strip()}\nТелефон: {body.phone.strip()}\nАвтомобиль: {body.car.strip()}"
+            enqueue_notification(c, slug, f"booking:new:{public_id}:owner", "owner", "", owner_text)
+            if telegram_user_id:
+                client_text = f"Запись в «{cfg.get('name', slug)}» создана\nДата: {start_text}\nУслуга: {service['title']}\nАвтомобиль: {body.car.strip()}\nСохраните это сообщение — оно подтверждает запись."
+                enqueue_notification(c, slug, f"booking:new:{public_id}:client", "client", telegram_user_id, client_text)
+            _event(c, slug, "booking", f"booking:{public_id}", source, medium, campaign, int(row["id"]))
+            c.execute("COMMIT")
             return {"booking": public_booking(row), "cancel_token": public_id, "duplicate": False}
         except HTTPException: raise
-        except sqlite3.IntegrityError:
+        except (sqlite3.IntegrityError, DatabaseIntegrityError):
             c.execute("ROLLBACK")
             row = c.execute("SELECT * FROM bookings WHERE tenant=? AND idempotency_key=?", (slug, key)).fetchone()
             if row: return {"booking": public_booking(row), "cancel_token": row["public_id"], "duplicate": True}
@@ -390,6 +463,12 @@ def cancel_public_booking(slug: str, public_id: str, body: CancelBody):
         hours = int(cfg.get("cancellation_hours", 24))
         if parse_dt(row["start_at"]) - studio_now(cfg) < timedelta(hours=hours): raise HTTPException(409, f"Онлайн-отмена доступна не позднее чем за {hours} ч. до визита. Позвоните в студию.")
         c.execute("UPDATE bookings SET status='cancelled', updated_at=? WHERE id=?", (now_iso(), row["id"]))
+        when_text = _when(row["start_at"])
+        message = f"Запись #{row['id']} отменена клиентом\nДата: {when_text}\nУслуга: {row['service_title']}\nКлиент: {row['customer_name']}\nТелефон: {row['phone']}"
+        enqueue_notification(c, slug, f"booking:cancel:{public_id}:owner", "owner", "", message)
+        if row["telegram_user_id"]:
+            enqueue_notification(c, slug, f"booking:cancel:{public_id}:client", "client", row["telegram_user_id"], f"Ваша запись в «{cfg.get('name', slug)}» на {when_text} отменена.")
+        _event(c, slug, "cancellation", f"cancel:{public_id}", row["source"] if "source" in row.keys() else "direct", row["medium"] if "medium" in row.keys() else "", row["campaign"] if "campaign" in row.keys() else "", int(row["id"]))
     return {"ok": True, "status": "cancelled"}
 
 @app.post("/api/public/{slug}/assistant")
@@ -522,29 +601,76 @@ def owner_update_booking(slug: str, booking_id: int, body: BookingUpdate, owner:
                 fields += ["start_at=?","end_at=?","box_id=?"]; vals += [start.isoformat(),end.isoformat(),boxid]
             fields.append("updated_at=?"); vals.append(now_iso()); vals += [slug,booking_id]
             c.execute("UPDATE bookings SET "+", ".join(fields)+" WHERE tenant=? AND id=?", vals)
-            result = c.execute("SELECT * FROM bookings WHERE tenant=? AND id=?",(slug,booking_id)).fetchone(); c.execute("COMMIT"); return {"booking": public_booking(result)}
+            result = c.execute("SELECT * FROM bookings WHERE tenant=? AND id=?",(slug,booking_id)).fetchone()
+            old_start = str(row["start_at"])
+            new_start = str(result["start_at"])
+            if old_start != new_start:
+                move_text = f"Запись #{booking_id} перенесена владельцем\nКлиент: {row['customer_name']}\nУслуга: {row['service_title']}\nБыло: {_when(old_start)}\nСтало: {_when(new_start)}"
+                enqueue_notification(c, slug, f"booking:move:{booking_id}:{new_start}:owner", "owner", "", move_text)
+                if row["telegram_user_id"]:
+                    enqueue_notification(c, slug, f"booking:move:{booking_id}:{new_start}:client", "client", row["telegram_user_id"], f"Ваша запись в «{cfg.get('name', slug)}» перенесена.\nБыло: {_when(old_start)}\nСтало: {_when(new_start)}")
+                _event(c, slug, "reschedule", f"move:{booking_id}:{new_start}", row["source"] if "source" in row.keys() else "direct", row["medium"] if "medium" in row.keys() else "", row["campaign"] if "campaign" in row.keys() else "", int(booking_id))
+            if row["status"] not in ("cancelled", "canceled", "rejected") and result["status"] in ("cancelled", "canceled", "rejected"):
+                cancel_text = f"Ваша запись в «{cfg.get('name', slug)}» отменена владельцем.\nДата: {_when(result['start_at'])}\nУслуга: {result['service_title']}"
+                if row["telegram_user_id"]:
+                    enqueue_notification(c, slug, f"booking:owner-cancel:{booking_id}:{result['updated_at']}:client", "client", row["telegram_user_id"], cancel_text)
+                _event(c, slug, "cancellation", f"owner-cancel:{booking_id}:{result['updated_at']}", row["source"] if "source" in row.keys() else "direct", row["medium"] if "medium" in row.keys() else "", row["campaign"] if "campaign" in row.keys() else "", int(booking_id))
+            c.execute("COMMIT"); return {"booking": public_booking(result)}
         except HTTPException: c.execute("ROLLBACK"); raise
         except Exception: c.execute("ROLLBACK"); raise
 
 @app.post("/api/owner/{slug}/bookings/{booking_id}/payments")
 def owner_payment(slug: str, booking_id: int, body: PaymentBody, owner: dict[str,str] = Depends(owner_auth)):
-    require_tenant(slug, owner)
+    cfg = require_tenant(slug, owner)
     if body.kind not in ("payment","refund"): raise HTTPException(422,"Тип операции должен быть payment или refund")
     with connect() as c:
         c.execute("BEGIN IMMEDIATE")
         try:
-            row = c.execute("SELECT id FROM bookings WHERE tenant=? AND id=?",(slug,booking_id)).fetchone()
+            row = c.execute("SELECT * FROM bookings WHERE tenant=? AND id=?",(slug,booking_id)).fetchone()
             if not row: raise HTTPException(404,"Запись не найдена")
             if body.kind == "refund":
                 totals = c.execute("SELECT COALESCE(SUM(CASE WHEN kind='payment' THEN amount ELSE -amount END),0) amount FROM payments WHERE tenant=? AND booking_id=?",(slug,booking_id)).fetchone()
                 if body.amount > totals["amount"]: raise HTTPException(409,"Сумма возврата больше фактически полученной оплаты по этой записи")
             c.execute("INSERT INTO payments(tenant,booking_id,kind,amount,note,created_at) VALUES(?,?,?,?,?,?)",(slug,booking_id,body.kind,body.amount,body.note[:500],now_iso()))
+            totals = c.execute("SELECT COALESCE(SUM(CASE WHEN kind='payment' THEN amount ELSE -amount END),0) amount FROM payments WHERE tenant=? AND booking_id=?",(slug,booking_id)).fetchone()
+            received = int(totals["amount"])
+            service = find_service(load_config(slug, public=False), row["service_id"])
+            price = int((service or {}).get("price_from", 0) or 0)
+            balance = max(0, price - received)
+            kind_text = "Платёж получен" if body.kind == "payment" else "Оформлен возврат"
+            owner_text = f"{kind_text} по записи #{booking_id}\nКлиент: {row['customer_name']}\nУслуга: {row['service_title']}\nСумма операции: {body.amount} ₽\nВсего получено с учётом возвратов: {received} ₽\nОриентировочный остаток от минимальной цены: {balance} ₽"
+            enqueue_notification(c, slug, f"payment:{booking_id}:{body.kind}:{now_iso()}:{body.amount}:owner", "owner", "", owner_text)
+            if row["telegram_user_id"]:
+                client_text = f"{kind_text} по вашей записи в «{cfg.get('name', slug)}»\nСумма операции: {body.amount} ₽\nВсего оплачено с учётом возвратов: {received} ₽\nОриентировочный остаток от минимальной цены: {balance} ₽"
+                enqueue_notification(c, slug, f"payment:{booking_id}:{body.kind}:{now_iso()}:{body.amount}:client", "client", row["telegram_user_id"], client_text)
             c.execute("COMMIT")
-            return {"ok":True}
+            return {"ok":True, "received_net": received, "balance_estimate": balance}
         except HTTPException:
             c.execute("ROLLBACK"); raise
         except Exception:
             c.execute("ROLLBACK"); raise
+
+@app.get("/api/owner/{slug}/analytics")
+def owner_analytics(slug: str, start: str | None = None, end: str | None = None, owner: dict[str,str] = Depends(owner_auth)):
+    require_tenant(slug, owner)
+    cfg = load_config(slug, public=False)
+    start_at = start or studio_today(cfg).replace(day=1).isoformat()
+    end_at = end or (studio_today(cfg) + timedelta(days=1)).isoformat()
+    if len(start_at) > 30 or len(end_at) > 30: raise HTTPException(422, "Некорректный диапазон дат")
+    with connect() as c:
+        rows = c.execute("SELECT source,medium,campaign,COUNT(*) visits FROM analytics_events WHERE tenant=? AND event_type='visit' AND created_at>=? AND created_at<? GROUP BY source,medium,campaign", (slug, start_at, end_at)).fetchall()
+        booked = c.execute("SELECT source,medium,campaign,COUNT(*) bookings,SUM(CASE WHEN LOWER(status) IN ('cancelled','canceled','отменена','отменено','отменён','отменен') THEN 1 ELSE 0 END) cancellations FROM bookings WHERE tenant=? AND created_at>=? AND created_at<? GROUP BY source,medium,campaign", (slug, start_at, end_at)).fetchall()
+        payments = c.execute("SELECT b.source,b.medium,b.campaign,COALESCE(SUM(CASE WHEN p.kind='payment' THEN p.amount ELSE -p.amount END),0) revenue FROM bookings b JOIN payments p ON p.booking_id=b.id AND p.tenant=b.tenant WHERE b.tenant=? AND p.created_at>=? AND p.created_at<? GROUP BY b.source,b.medium,b.campaign", (slug, start_at, end_at)).fetchall()
+    keys = {}
+    for r in rows:
+        key = (r["source"], r["medium"], r["campaign"]); keys.setdefault(key, {"source":key[0],"medium":key[1],"campaign":key[2],"visits":0,"bookings":0,"cancellations":0,"revenue":0}); keys[key]["visits"] += int(r["visits"])
+    for r in booked:
+        key = (r["source"], r["medium"], r["campaign"]); keys.setdefault(key, {"source":key[0],"medium":key[1],"campaign":key[2],"visits":0,"bookings":0,"cancellations":0,"revenue":0}); keys[key]["bookings"] = int(r["bookings"] or 0); keys[key]["cancellations"] = int(r["cancellations"] or 0)
+    for r in payments:
+        key = (r["source"], r["medium"], r["campaign"]); keys.setdefault(key, {"source":key[0],"medium":key[1],"campaign":key[2],"visits":0,"bookings":0,"cancellations":0,"revenue":0}); keys[key]["revenue"] = int(r["revenue"] or 0)
+    channels = list(keys.values())
+    for item in channels: item["conversion_percent"] = round(item["bookings"] * 100 / item["visits"], 2) if item["visits"] else 0
+    return {"start":start_at,"end":end_at,"channels":sorted(channels,key=lambda x:x["bookings"],reverse=True),"totals":{"visits":sum(x["visits"] for x in channels),"bookings":sum(x["bookings"] for x in channels),"cancellations":sum(x["cancellations"] for x in channels),"revenue":sum(x["revenue"] for x in channels)}}
 
 @app.put("/api/owner/{slug}/config")
 def owner_save_config(slug: str, body: dict[str, Any], owner: dict[str,str] = Depends(owner_auth)):
