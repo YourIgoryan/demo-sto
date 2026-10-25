@@ -1,27 +1,12 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="ru">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#111827" />
     <meta name="description" content="Онлайн-запись в автосервис и детейлинг-студию AutoStudio." />
     <title>AutoStudio — запись в студию</title>
-    <script>
-      // Remove stale service workers from earlier builds. The reload is not forced;
-      // unregistering takes effect on the next navigation and avoids stale redirects.
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.getRegistrations().then(registrations => {
-            registrations.forEach(registration => registration.unregister());
-          }).catch(() => {});
-        });
-      }
-      if ('caches' in window) {
-        window.addEventListener('load', () => {
-          caches.keys().then(keys => Promise.all(keys.map(key => caches.delete(key)))).catch(() => {});
-        });
-      }
-    </script>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
   </head>
   <body>
     <div id="root"></div>

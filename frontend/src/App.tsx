@@ -195,6 +195,14 @@ function useReveal(deps: unknown[] = []) {
 }
 function App() {
   const route = useMemo(pathParts, []);
+  useEffect(() => {
+    const webApp = (window as Window & {
+      Telegram?: { WebApp?: { ready: () => void; expand: () => void } }
+    }).Telegram?.WebApp;
+    if (!webApp) return;
+    webApp.ready();
+    webApp.expand();
+  }, []);
   const [config, setConfig] = useState<Config | null>(() => DEMO_MODE ? DEMO_CONFIG : readCachedConfig(route.slug));
   const [loading, setLoading] = useState(() => !DEMO_MODE && !readCachedConfig(route.slug));
   const [error, setError] = useState('');

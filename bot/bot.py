@@ -10,8 +10,9 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, Dispatcher
+from aiogram import F
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo
 from dotenv import load_dotenv
 
 BOT_DIR = Path(__file__).resolve().parent
@@ -113,56 +114,101 @@ async def require_admin(message: Message) -> bool:
     return True
 
 
+def app_url(source: str = "start") -> str:
+    if not PUBLIC_BASE_URL:
+        return ""
+    return f"{PUBLIC_BASE_URL}/s/{TENANT_SLUG}/?utm_source=telegram&utm_medium=bot&utm_campaign={source}"
+
+
+def client_keyboard() -> InlineKeyboardMarkup:
+    url = app_url()
+    buttons = []
+    if url.startswith("https://"):
+        buttons.append([InlineKeyboardButton(text="Записаться онлайн", web_app=WebAppInfo(url=url))])
+        buttons.append([InlineKeyboardButton(text="Открыть страницу студии", url=url)])
+    else:
+        buttons.append([InlineKeyboardButton(text="Услуги и запись", callback_data="client:services")])
+    buttons.append([
+        InlineKeyboardButton(text="Услуги", callback_data="client:services"),
+        InlineKeyboardButton(text="Контакты", callback_data="client:contacts"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 @dp.message(Command("start"))
 async def start(message: Message):
-    if admin_id() is None:
-        await message.answer(
-            f"AutoStudio подключается к студии «{config().get('name', TENANT_SLUG)}».\n"
-            f"Ваш Telegram ID: {message.chat.id}\n\n"
-            "Добавьте этот ID в bot/.env в поле ADMIN_CHAT_ID и перезапустите бота."
-        )
-        return
-    if not await require_admin(message):
-        return
-    await message.answer(
-        f"Бот уведомлений студии «{config().get('name', TENANT_SLUG)}» подключён.\n\n"
-        "/today — записи на сегодня\n"
-        "/tomorrow — записи на завтра\n"
-        "/week — записи за неделю\n"
-        "/money — полученные деньги за текущую неделю\n"
-        "/test — проверить уведомления\n"
-        "/link — ссылка на запись"
+    cfg = config()
+    name = cfg.get("name", TENANT_SLUG)
+    text = (
+        f"Добро пожаловать в «{name}»!\n\n"
+        "Здесь можно посмотреть услуги и записаться онлайн. "
+        "Выберите действие ниже."
     )
+    if message.chat.id == admin_id():
+        text += (
+            "\n\nКоманды владельца: /today — сегодня, /tomorrow — завтра, "
+            "/week — неделя, /money — платежи, /test — проверка, /link — ссылка."
+        )
+    url = app_url()
+    if not url.startswith("https://"):
+        text += "\n\nДля онлайн-записи владелец должен указать HTTPS-адрес в bot/.env (PUBLIC_BASE_URL)."
+    await message.answer(text, reply_markup=client_keyboard())
+
+
+@dp.callback_query(F.data == "client:services")
+async def client_services(callback: CallbackQuery):
+    cfg = config()
+    services = [s for s in cfg.get("services", []) if s.get("active", True)]
+    if not services:
+        text = "Список услуг пока не опубликован. Напишите или позвоните в студию для уточнения."
+    else:
+        lines = [f"Услуги студии «{cfg.get('name', TENANT_SLUG)}»:"]
+        for service in services[:20]:
+            title = str(service.get("title", "Услуга"))
+            price = service.get("price_from")
+            duration = service.get("duration_minutes")
+            details = []
+            if isinstance(price, (int, float)) and price > 0:
+                details.append(f"от {money(int(price))}")
+            if isinstance(duration, (int, float)) and duration > 0:
+                hours, minutes = divmod(int(duration), 60)
+                duration_text = (f"{hours} ч" if hours else "") + (f" {minutes} мин" if minutes else "")
+                details.append(duration_text.strip())
+            suffix = f" — {' · '.join(details)}" if details else ""
+            description = str(service.get("description", "")).strip()
+            lines.append(f"\n• {title}{suffix}" + (f"\n  {description}" if description else ""))
+        text = "\n".join(lines)
+    await callback.message.answer(text, reply_markup=client_keyboard())
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "client:contacts")
+async def client_contacts(callback: CallbackQuery):
+    cfg = config()
+    lines = [f"Контакты «{cfg.get('name', TENANT_SLUG)}»"]
+    phone = str(cfg.get("phone", "")).strip()
+    address = str(cfg.get("address", "")).strip()
+    if phone:
+        lines.append(f"Телефон: {phone}")
+    if address:
+        lines.append(f"Адрес: {address}")
+    if not phone and not address:
+        lines.append("Контактные данные пока не указаны. Уточните информацию у владельца студии.")
+    await callback.message.answer("\n".join(lines), reply_markup=client_keyboard())
+    await callback.answer()
 
 
 @dp.message(Command("help"))
 async def help_command(message: Message):
-    if not await require_admin(message):
+    if message.chat.id == admin_id():
+        await message.answer("Команды владельца: /today, /tomorrow, /week, /money, /test, /link. Для клиентского меню отправьте /start.")
         return
-    await message.answer("Команды: /today, /tomorrow, /week, /money, /test, /link")
-
-
-async def send_period(message: Message, offset_days: int, days: int, title: str):
-    if not await require_admin(message):
-        return
-    now = studio_now()
-    start_date = now.date() + timedelta(days=offset_days)
-    start = datetime.combine(start_date, datetime.min.time())
-    end = start + timedelta(days=days)
-    rows = get_bookings(start, end)
-    if not rows:
-        await message.answer(f"{title}: записей нет.")
-        return
-    lines = [f"{title} — {len(rows)} записей:"]
-    for row in rows[:40]:
-        try:
-            dt = datetime.fromisoformat(row["start_at"]).strftime("%d.%m %H:%M")
-        except Exception:
-            dt = row["start_at"]
-        lines.append(f"\n• {dt} — {row['service_title']}\n  {row['customer_name']} · {row['car']}\n  {row['phone']} · {row['status']}")
-    if len(rows) > 40:
-        lines.append(f"\nПоказаны первые 40 из {len(rows)} записей.")
-    await message.answer("\n".join(lines))
+    await message.answer(
+        "Помощь AutoStudio\n\n"
+        "Нажмите «Записаться онлайн», чтобы выбрать услугу и свободное время. "
+        "Список услуг и контакты доступны в меню /start.",
+        reply_markup=client_keyboard(),
+    )
 
 
 @dp.message(Command("today"))
@@ -205,7 +251,7 @@ async def link_command(message: Message):
     if not PUBLIC_BASE_URL:
         await message.answer("Укажите публичный HTTPS-адрес в bot/.env в поле PUBLIC_BASE_URL и перезапустите бота.")
         return
-    await message.answer(f"Ссылка на запись: {PUBLIC_BASE_URL}/s/{TENANT_SLUG}/")
+    await message.answer(f"Ссылка на запись: {app_url()}", reply_markup=client_keyboard())
 
 
 @dp.message(Command("test"))
