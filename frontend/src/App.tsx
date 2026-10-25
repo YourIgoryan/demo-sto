@@ -78,8 +78,34 @@ type DaySlots = {
     label: string;
   }[];
 };
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || (typeof window !== 'undefined' && window.location.hostname.endsWith('github.io') ? 'https://autostudio-api.onrender.com' : '')).replace(/\/$/, '');
 const API = `${API_BASE_URL}/api`;
+const API_ORIGIN = API_BASE_URL || (typeof window !== 'undefined' ? window.location.origin : '');
+
+/**
+ * Serve uploaded tenant photos from the API host (not GitHub Pages), and proxy
+ * third-party image hosts through the API so visitors don't need direct access
+ * to those hosts. The backend proxy only permits known public image CDNs.
+ */
+function imageSrc(value: string | undefined | null, slug = 'sample'): string {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (raw.startsWith('data:') || raw.startsWith('blob:')) return raw;
+  if (raw.startsWith('/tenants/') || raw.startsWith('/api/')) return `${API_ORIGIN}${raw}`;
+  if (raw.startsWith('//')) {
+    const absolute = `https:${raw}`;
+    return `${API}/public/${encodeURIComponent(slug)}/image?url=${encodeURIComponent(absolute)}`;
+  }
+  try {
+    const parsed = new URL(raw, typeof window !== 'undefined' ? window.location.origin : 'https://example.invalid');
+    if (parsed.origin === window.location.origin && (parsed.pathname.startsWith('/demo-sto/') || parsed.pathname.startsWith('/assets/'))) return raw;
+    if (parsed.origin === API_ORIGIN) return raw;
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return `${API}/public/${encodeURIComponent(slug)}/image?url=${encodeURIComponent(parsed.href)}`;
+    }
+  } catch { /* Invalid image URL: let the browser report a normal broken image. */ }
+  return raw;
+}
 const DEMO_MODE = import.meta.env.MODE === 'demo';
 const DEMO_CONFIG = demoConfigData as Config;
 // Keep the last public studio configuration so repeat visits can render immediately
@@ -770,7 +796,7 @@ function App() {
           </div>
           <h3 className="settings-subtitle">Главное фото и информационные карточки</h3>
           <div className="hero-upload">
-            <img src={ownerData.config.hero_image} alt="Главное фото" />
+            <img src={imageSrc(ownerData.config.hero_image, route.slug)} alt="Главное фото" />
             <label className="button soft upload-button">
               <Upload size={16} /> Заменить главное фото<input type="file" accept="image/jpeg,image/png,image/webp" onChange={e => e.target.files?.[0] && uploadPhoto(e.target.files[0], 'hero')} />
             </label>
@@ -799,7 +825,7 @@ function App() {
           </div>
           <div className="gallery-admin">{ownerData.config.gallery.map((g: Gallery, i: number) =>
             <div className="gallery-admin-card" key={g.id}>
-              <img src={g.image} alt={g.caption} />
+              <img src={imageSrc(g.image, route.slug)} alt={g.caption} />
               <div className="gallery-admin-body">
                 <label>Подпись<input value={g.caption} onChange={e => setOwnerData((p: any) => ({ ...p, config: { ...p.config, gallery: p.config.gallery.map((x: Gallery, j: number) => j === i ? { ...x, caption: e.target.value } : x) } }))} />
                 </label>
@@ -833,7 +859,7 @@ function App() {
     {DEMO_MODE && <div className="demo-ribbon">ДЕМОВЕРСИЯ · заявки не отправляются</div>}
     <header className="topbar">
       <a className="brand" href="#top" onClick={() => setSection('home')}>
-        <span className="brand-symbol">{config.logo ? <img src={config.logo} alt="" /> : <Wrench size={19} />}</span>
+        <span className="brand-symbol">{config.logo ? <img src={imageSrc(config.logo, config.slug)} alt="" /> : <Wrench size={19} />}</span>
         <span>
           <b>{config.name}</b>
           <small>CARE · DETAIL · DRIVE</small>
@@ -875,7 +901,7 @@ function App() {
     </header>
     <main id="top">
       <section className="hero">
-        <div className="hero-photo" aria-hidden="true"><img className="hero-image" src={config.hero_image} alt="" loading="eager" fetchPriority="high" decoding="async" /></div>
+        <div className="hero-photo" aria-hidden="true"><img className="hero-image" src={imageSrc(config.hero_image, config.slug)} alt="" loading="eager" fetchPriority="high" decoding="async" /></div>
         <div className="hero-content">
           <div className="eyebrow hero-eyebrow">
             <span className="live-dot" /> ПРЕМИАЛЬНЫЙ УХОД ЗА АВТОМОБИЛЕМ</div>
@@ -953,7 +979,7 @@ function App() {
         </div>
         <div className="service-grid">{activeServices.map((s, i) =>
           <article className="service-card reveal" key={s.id}>
-            <div className="service-image">{s.image ? <img src={s.image} alt={s.title} loading="lazy" decoding="async" fetchPriority="low" /> : <div className="service-image-placeholder">
+            <div className="service-image">{s.image ? <img src={imageSrc(s.image, config.slug)} alt={s.title} loading="lazy" decoding="async" fetchPriority="low" /> : <div className="service-image-placeholder">
               <Wrench size={34} />
             </div>}<span className="service-number">0{i + 1}</span>
               <button className="circle-arrow" aria-label={`Записаться: ${s.title}`} onClick={() => openBooking(s.id)}>
@@ -986,7 +1012,7 @@ function App() {
       </section>
       <section className="section why-section">
         <div className="why-visual reveal">
-          <img src={config.gallery[0]?.image || config.hero_image} alt="Детейлинг автомобиля" loading="lazy" decoding="async" fetchPriority="low" />
+          <img src={imageSrc(config.gallery[0]?.image || config.hero_image, config.slug)} alt="Детейлинг автомобиля" loading="lazy" decoding="async" fetchPriority="low" />
           <div className="image-caption">
             <span>DETAILS MATTER</span>
             <b>Каждая линия имеет значение.</b>
@@ -1024,7 +1050,7 @@ function App() {
         </div>
         <div className="gallery-grid">{(config.gallery || []).map((g, i) =>
           <article className={`gallery-card gallery-card-${i % 3} reveal`} key={g.id}>
-            <img src={g.image} alt={g.caption} loading="lazy" decoding="async" fetchPriority="low" />
+            <img src={imageSrc(g.image, config.slug)} alt={g.caption} loading="lazy" decoding="async" fetchPriority="low" />
             <div className="gallery-overlay">
               <span>РАБОТА / 0{i + 1}</span>
               <b>{g.caption}</b>

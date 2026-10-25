@@ -1,5 +1,6 @@
 from __future__ import annotations
 import html, json, os, re, secrets, sqlite3, time
+from urllib.parse import urlparse
 import httpx
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
@@ -130,6 +131,64 @@ class PaymentBody(BaseModel): kind: str = "payment"; amount: int = Field(gt=0, l
 
 @app.get("/api/health")
 def health(): return {"status": "ok"}
+
+# Small in-memory cache for external photos. This keeps repeat views fast and
+# avoids requiring visitors' browsers to contact third-party image CDNs directly.
+_IMAGE_PROXY_CACHE: dict[str, tuple[float, bytes, str]] = {}
+_IMAGE_PROXY_HOSTS = tuple(x.strip().lower() for x in os.getenv(
+    "IMAGE_PROXY_ALLOWED_HOSTS",
+    "unsplash.com,pexels.com,pixabay.com,freepik.com,cloudinary.com,tildacdn.com,ibb.co,ctfassets.net,shopify.com,squarespace-cdn.com,imageshack.com,postimg.cc"
+).split(",") if x.strip())
+
+def _allowed_image_host(host: str) -> bool:
+    host = host.lower().rstrip(".")
+    return any(host == root or host.endswith("." + root) for root in _IMAGE_PROXY_HOSTS)
+
+@app.get("/api/public/{slug}/image")
+def public_image_proxy(slug: str, url: str):
+    """Proxy public images from known CDNs to avoid client-side CDN reachability issues."""
+    load_config(slug)
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme != "https" or not parsed.hostname or not _allowed_image_host(parsed.hostname):
+            raise HTTPException(400, "Источник изображения не поддерживается")
+    except ValueError:
+        raise HTTPException(400, "Некорректный адрес изображения")
+
+    now = time.time()
+    cached = _IMAGE_PROXY_CACHE.get(url)
+    if cached and cached[0] > now:
+        return Response(cached[1], media_type=cached[2], headers={"Cache-Control": "public, max-age=86400"})
+
+    try:
+        with httpx.Client(timeout=httpx.Timeout(8.0, connect=4.0), follow_redirects=True, max_redirects=3) as client:
+            with client.stream("GET", url, headers={"User-Agent": "AutoStudioImageProxy/1.0", "Accept": "image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8"}) as upstream:
+                final_url = urlparse(str(upstream.url))
+                if not _allowed_image_host(final_url.hostname or ""):
+                    raise HTTPException(400, "Перенаправление на внешний источник запрещено")
+                if upstream.status_code != 200:
+                    raise HTTPException(502, "Источник изображения временно недоступен")
+                media_type = upstream.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+                if not media_type.startswith("image/") or media_type in ("image/svg+xml", "image/x-icon"):
+                    raise HTTPException(415, "Источник не вернул поддерживаемое изображение")
+                chunks = bytearray()
+                for chunk in upstream.iter_bytes():
+                    chunks.extend(chunk)
+                    if len(chunks) > 8 * 1024 * 1024:
+                        raise HTTPException(413, "Изображение слишком большое")
+                body = bytes(chunks)
+        if len(_IMAGE_PROXY_CACHE) > 200:
+            for key, value in list(_IMAGE_PROXY_CACHE.items()):
+                if value[0] <= now:
+                    _IMAGE_PROXY_CACHE.pop(key, None)
+            if len(_IMAGE_PROXY_CACHE) > 200:
+                _IMAGE_PROXY_CACHE.pop(next(iter(_IMAGE_PROXY_CACHE)))
+        _IMAGE_PROXY_CACHE[url] = (now + 3600, body, media_type)
+        return Response(body, media_type=media_type, headers={"Cache-Control": "public, max-age=86400"})
+    except HTTPException:
+        raise
+    except httpx.HTTPError:
+        raise HTTPException(502, "Не удалось загрузить изображение с внешнего источника")
 
 @app.get("/api/public/{slug}/config")
 def public_config(slug: str):
