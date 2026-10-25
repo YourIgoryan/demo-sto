@@ -82,6 +82,21 @@ const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, ''
 const API = `${API_BASE_URL}/api`;
 const DEMO_MODE = import.meta.env.MODE === 'demo';
 const DEMO_CONFIG = demoConfigData as Config;
+// Keep the last public studio configuration so repeat visits can render immediately
+// while the API refreshes it in the background.
+const configCacheKey = (slug: string) => `autostudio-public-config-v1-${slug}`;
+function readCachedConfig(slug: string): Config | null {
+  try {
+    const raw = localStorage.getItem(configCacheKey(slug));
+    if (!raw) return null;
+    const cached = JSON.parse(raw) as Config;
+    if (!cached || typeof cached !== 'object' || !Array.isArray(cached.services)) return null;
+    if (cached.slug && cached.slug !== slug) return null;
+    return cached;
+  } catch {
+    return null;
+  }
+}
 const money = (n: number, currency = '₽') => `${new Intl.NumberFormat('ru-RU').format(n)} ${currency}`;
 const dateLabel = (v: string, opts: Intl.DateTimeFormatOptions = { weekday: 'short', day: 'numeric', month: 'short' }) => new Intl.DateTimeFormat('ru-RU', opts).format(new Date(v));
 const dateTime = (v: string) => {
@@ -154,8 +169,8 @@ function useReveal(deps: unknown[] = []) {
 }
 function App() {
   const route = useMemo(pathParts, []);
-  const [config, setConfig] = useState<Config | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [config, setConfig] = useState<Config | null>(() => DEMO_MODE ? DEMO_CONFIG : readCachedConfig(route.slug));
+  const [loading, setLoading] = useState(() => !DEMO_MODE && !readCachedConfig(route.slug));
   const [error, setError] = useState('');
   const [section, setSection] = useState('home');
   const [bookingOpen, setBookingOpen] = useState(false);
@@ -215,7 +230,24 @@ function App() {
       setLoading(false);
       return;
     }
-    api<Config>(`/public/${route.slug}/config`).then(c => { setConfig(c); setError(''); document.title = `${c.name} — запись в студию`; let link = document.querySelector<HTMLLinkElement>('link[rel="manifest"]'); if (!link) { link = document.createElement('link'); link.rel = 'manifest'; document.head.appendChild(link); } link.href = `${API}/public/${route.slug}/manifest.json`; let apple = document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]'); if (!apple) { apple = document.createElement('link'); apple.rel = 'apple-touch-icon'; document.head.appendChild(apple); } apple.href = `${API}/public/${route.slug}/icon.png`; const theme = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]'); theme?.setAttribute('content', c.theme_color || '#111311'); }).catch(e => setError(e.message)).finally(() => setLoading(false));
+    const cachedConfig = readCachedConfig(route.slug);
+    api<Config>(`/public/${route.slug}/config`).then(c => {
+      setConfig(c);
+      setError('');
+      try { localStorage.setItem(configCacheKey(route.slug), JSON.stringify(c)); } catch { /* Storage may be disabled or full. */ }
+      document.title = `${c.name} — запись в студию`;
+      let link = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
+      if (!link) { link = document.createElement('link'); link.rel = 'manifest'; document.head.appendChild(link); }
+      link.href = `${API}/public/${route.slug}/manifest.json`;
+      let apple = document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]');
+      if (!apple) { apple = document.createElement('link'); apple.rel = 'apple-touch-icon'; document.head.appendChild(apple); }
+      apple.href = `${API}/public/${route.slug}/icon.png`;
+      const theme = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+      theme?.setAttribute('content', c.theme_color || '#111311');
+    }).catch(e => {
+      // A previously loaded public page remains usable if the API is waking up or temporarily unavailable.
+      if (!cachedConfig) setError(e.message);
+    }).finally(() => setLoading(false));
   }, [route.slug]);
   useEffect(() => { const listener = (e: Event) => { e.preventDefault(); setInstallPrompt(e); }; window.addEventListener('beforeinstallprompt', listener); return () => window.removeEventListener('beforeinstallprompt', listener); }, []);
   useEffect(() => { if (ownerToken && route.owner) refreshOwner().catch(() => { setOwnerToken(''); sessionStorage.removeItem(`autostudio-owner-${route.slug}`); }); }, [ownerToken, route.owner]);
